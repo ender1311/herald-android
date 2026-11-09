@@ -11,6 +11,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.Icon
 import android.util.Log
+import androidx.annotation.DrawableRes
 import com.google.firebase.messaging.RemoteMessage
 import com.herald.sdk.push.HeraldPushPayload
 import org.json.JSONArray
@@ -36,8 +37,22 @@ object HeraldNotifications {
 
     private const val MAX_ACTIONS = 3
     private const val IMAGE_TIMEOUT_MS = 5_000
+    /** Whole download, so a slow-drip server cannot hold onMessageReceived past FCM's window. */
+    private const val IMAGE_DEADLINE_MS = 8_000L
     private const val IMAGE_MAX_BYTES = 5 * 1024 * 1024
     private const val IMAGE_MAX_WIDTH_PX = 1024
+    private const val IMAGE_MAX_HEIGHT_PX = 1024
+    private const val IMAGE_MAX_PIXELS = 1024 * 1024
+
+    /**
+     * Small icon for Herald notifications: a monochrome drawable resource (white on transparent).
+     * 0 (default) uses the `com.google.firebase.messaging.default_notification_icon` meta-data, then
+     * herald-fcm's own bell icon. The app's launcher icon is never used: an adaptive icon as the small
+     * icon crashes the app on Android 8.0.
+     */
+    @JvmStatic
+    @DrawableRes
+    var smallIcon: Int = 0
 
     /**
      * Creates Herald's default channel (id [DEFAULT_CHANNEL_ID]) if it does not exist. The name comes from
@@ -139,6 +154,7 @@ object HeraldNotifications {
     }
 
     private fun smallIcon(context: Context): Int {
+        if (smallIcon != 0) return smallIcon
         val meta = try {
             context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA).metaData
         } catch (e: PackageManager.NameNotFoundException) {
@@ -146,7 +162,18 @@ object HeraldNotifications {
         }
         // Same meta-data key Firebase uses for its own notifications.
         return meta?.getInt("com.google.firebase.messaging.default_notification_icon", 0)?.takeIf { it != 0 }
-            ?: context.applicationInfo.icon
+            ?: R.drawable.herald_ic_notification
+    }
+
+    /** Smallest power of two that fits the decoded image in 1024 x 1024 px. */
+    internal fun sampleSize(width: Int, height: Int): Int {
+        var sample = 1
+        while (
+            width / sample > IMAGE_MAX_WIDTH_PX ||
+            height / sample > IMAGE_MAX_HEIGHT_PX ||
+            (width / sample).toLong() * (height / sample) > IMAGE_MAX_PIXELS
+        ) sample *= 2
+        return sample
     }
 
     private fun downloadImage(url: String): Bitmap? {
@@ -160,6 +187,7 @@ object HeraldNotifications {
             connection.connectTimeout = IMAGE_TIMEOUT_MS
             connection.readTimeout = IMAGE_TIMEOUT_MS
             if (connection.responseCode !in 200..299) return null
+            val deadline = System.currentTimeMillis() + IMAGE_DEADLINE_MS
             val out = ByteArrayOutputStream()
             connection.inputStream.use { input ->
                 val buffer = ByteArray(16 * 1024)
@@ -167,17 +195,20 @@ object HeraldNotifications {
                     val n = input.read(buffer)
                     if (n < 0) break
                     out.write(buffer, 0, n)
-                    if (out.size() > IMAGE_MAX_BYTES) return null
+                    if (out.size() > IMAGE_MAX_BYTES || System.currentTimeMillis() > deadline) return null
                 }
             }
             val bytes = out.toByteArray()
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-            var sample = 1
-            while (bounds.outWidth / (sample * 2) >= IMAGE_MAX_WIDTH_PX) sample *= 2
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            val sample = sampleSize(bounds.outWidth, bounds.outHeight)
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
         } catch (e: Exception) {
             Log.w("Herald", "Notification image failed (${e.javaClass.simpleName})")
+            null
+        } catch (e: OutOfMemoryError) {
+            Log.w("Herald", "Notification image too large to decode")
             null
         } finally {
             connection.disconnect()

@@ -35,11 +35,30 @@ class FeedLogicTest {
     }
 
     @Test
-    fun sampleSizeKeepsAtLeastTargetWidth() {
-        assertEquals(1, HeraldImages.sampleSize(800, 1000))
-        assertEquals(2, HeraldImages.sampleSize(2000, 1000))
-        assertEquals(4, HeraldImages.sampleSize(4000, 1000))
-        assertEquals(2, HeraldImages.sampleSize(3999, 1000))
-        assertEquals(1, HeraldImages.sampleSize(4000, 0))
+    fun sampleSizeBoundsWidthHeightAndPixels() {
+        assertEquals(1, HeraldImages.sampleSize(800, 450, 1000, 2000))
+        assertEquals(2, HeraldImages.sampleSize(2000, 1000, 1000, 2000))
+        assertEquals(4, HeraldImages.sampleSize(4000, 2000, 1000, 2000))
+        // Tall image: height drives the sample even though the width already fits.
+        val tall = HeraldImages.sampleSize(1080, 25000, 1080, 2160)
+        assertEquals(16, tall)
+        assertTrue(25000 / tall <= 2160)
+        // Huge square under a generous box: the pixel budget caps it.
+        val huge = HeraldImages.sampleSize(10000, 10000, 10000, 20000)
+        assertTrue((10000L / huge) * (10000L / huge) <= HeraldImages.MAX_PIXELS)
+    }
+
+    @Test
+    fun unboundedWidthClampsToDisplay() {
+        assertEquals(1080, HeraldImages.clampWidth(Int.MAX_VALUE, 1080))
+        assertEquals(1080, HeraldImages.clampWidth(0, 1080))
+        assertEquals(500, HeraldImages.clampWidth(500, 1080))
+    }
+
+    @Test
+    fun onlyTappedMainFrameNavigationsAreClicks() {
+        assertTrue(isUserNavigation(isMainFrame = true, hasGesture = true))
+        assertFalse(isUserNavigation(isMainFrame = true, hasGesture = false)) // redirect, meta refresh
+        assertFalse(isUserNavigation(isMainFrame = false, hasGesture = true)) // iframe
     }
 }

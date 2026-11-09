@@ -2,14 +2,19 @@ package com.herald.ui
 
 import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
+import android.util.Log
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.WebSettings
 import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -113,9 +118,21 @@ internal fun messageColors(style: InAppStyle, theme: HeraldTheme): MessageColors
 }
 
 @Composable
-private fun MessageText(message: InAppMessage, colors: MessageColors, theme: HeraldTheme, align: TextAlign) {
+private fun MessageText(
+    message: InAppMessage,
+    colors: MessageColors,
+    theme: HeraldTheme,
+    align: TextAlign,
+    headerInset: Dp = 0.dp,
+) {
     message.content.header?.let {
-        Text(it, style = theme.typography.title, color = colors.text, textAlign = align, modifier = Modifier.fillMaxWidth())
+        Text(
+            it,
+            style = theme.typography.title,
+            color = colors.text,
+            textAlign = align,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = headerInset),
+        )
     }
     message.content.body?.let {
         if (message.content.header != null) Spacer(Modifier.height(6.dp))
@@ -195,7 +212,8 @@ fun ModalMessageView(message: InAppMessage, actions: InAppMessageActions, theme:
         Modifier
             .fillMaxSize()
             .background(theme.colors().scrim)
-            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, onClick = actions::dismiss)
+            // Tap gestures, not clickable: no unlabeled full-screen node for TalkBack (Close and back still work).
+            .pointerInput(Unit) { detectTapGestures { actions.dismiss() } }
             .safeDrawingPadding()
             .padding(theme.spacing * 1.5f),
         contentAlignment = Alignment.Center,
@@ -207,14 +225,15 @@ fun ModalMessageView(message: InAppMessage, actions: InAppMessageActions, theme:
                 .clip(RoundedCornerShape(colors.cornerRadius))
                 .background(colors.background)
                 // Swallows taps so they do not reach the scrim.
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {},
+                .pointerInput(Unit) { detectTapGestures { } },
         ) {
             Column(Modifier.verticalScroll(rememberScrollState())) {
                 message.content.imageUrl?.let {
                     CardImage(it, description = null, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                 }
                 Column(Modifier.padding(theme.spacing * 1.5f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    MessageText(message, colors, theme, TextAlign.Center)
+                    // Keeps a long centered header clear of the 48 dp close button.
+                    MessageText(message, colors, theme, TextAlign.Center, headerInset = 32.dp)
                     MessageButtons(message, colors, theme, actions)
                 }
             }
@@ -245,7 +264,8 @@ fun FullScreenMessageView(message: InAppMessage, actions: InAppMessageActions, t
 /**
  * Renders `content.html` in a WebView. JavaScript is on for this view only, with a `herald` bridge:
  * `herald.close()` dismisses and `herald.click(id)` logs a button click. File and content access are off,
- * and any link the page opens goes to the system (logged as a click, then the message closes).
+ * and a link the user taps goes to the system (logged as a click, then the message closes). Navigations
+ * without a tap (redirects, refreshes, frames) are blocked. If the renderer dies, the message closes.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -255,7 +275,14 @@ fun HtmlMessageView(message: InAppMessage, actions: InAppMessageActions, theme: 
     AndroidView(
         modifier = Modifier.fillMaxSize().background(colors.background).safeDrawingPadding(),
         factory = { context ->
-            WebView(context).apply {
+            // WebView throws while its package is missing or updating: show nothing and close the message.
+            val webView = try {
+                WebView(context)
+            } catch (e: Exception) {
+                Log.w("Herald", "WebView unavailable; HTML message closed", e)
+                return@AndroidView View(context).also { it.post { actions.dismiss() } }
+            }
+            webView.apply {
                 setBackgroundColor(background)
                 settings.javaScriptEnabled = true
                 settings.allowFileAccess = false
@@ -263,9 +290,23 @@ fun HtmlMessageView(message: InAppMessage, actions: InAppMessageActions, theme: 
                 settings.domStorageEnabled = false
                 settings.setSupportMultipleWindows(false)
                 settings.javaScriptCanOpenWindowsAutomatically = false
+                settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        actions.bodyClicked(request.url.toString())
+                        // Redirects, meta refreshes and frame loads are blocked silently; only a tap is a click.
+                        if (isUserNavigation(request.isForMainFrame, request.hasGesture())) {
+                            actions.bodyClicked(request.url.toString())
+                        }
+                        return true
+                    }
+
+                    // Without this, a renderer crash or kill takes the host app down with it.
+                    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                        Log.w("Herald", "HTML message renderer gone; message closed")
+                        (view.parent as? ViewGroup)?.removeView(view)
+                        view.tag = DESTROYED
+                        view.destroy()
+                        view.post { actions.dismiss() }
                         return true
                     }
                 }
@@ -273,9 +314,14 @@ fun HtmlMessageView(message: InAppMessage, actions: InAppMessageActions, theme: 
                 loadDataWithBaseURL(null, message.content.html.orEmpty(), "text/html", "utf-8", null)
             }
         },
-        onRelease = { it.destroy() },
+        onRelease = { if (it is WebView && it.tag !== DESTROYED) it.destroy() },
     )
 }
+
+private val DESTROYED = Any()
+
+/** Only a main-frame navigation the user started (a link tap) counts as a click and leaves the app. */
+internal fun isUserNavigation(isMainFrame: Boolean, hasGesture: Boolean) = isMainFrame && hasGesture
 
 /** The `herald` object the HTML message's JavaScript sees. Calls arrive on a WebView thread. */
 private class HtmlBridge(private val view: WebView, private val actions: InAppMessageActions) {

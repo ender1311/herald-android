@@ -40,4 +40,12 @@ class HeraldNotificationsTest {
         assertEquals("Hi", payload.title)
         assertNull(HeraldNotifications.payloadOf(mapOf("deeplink" to "x"), null))
     }
+
+    @Test
+    fun notificationImageSampleFitsTallAndWideImages() {
+        assertEquals(1, HeraldNotifications.sampleSize(1024, 512))
+        assertEquals(2, HeraldNotifications.sampleSize(2048, 1024))
+        val tall = HeraldNotifications.sampleSize(1080, 25000)
+        assertTrue(25000 / tall <= 1024 && 1080 / tall <= 1024)
+    }
 }

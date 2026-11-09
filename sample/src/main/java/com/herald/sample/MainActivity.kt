@@ -1,7 +1,9 @@
 package com.herald.sample
 
+import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -40,8 +42,19 @@ class MainActivity : ComponentActivity() {
         Herald.handleNotificationIntent(intent)
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                LumenApp(onEnablePush = { Herald.requestPushAuthorization(this) })
+                LumenApp(onEnablePush = ::enablePush)
             }
+        }
+    }
+
+    /** Prompts on Android 13+ when needed; otherwise notifications are already allowed, so opt in now. */
+    private fun enablePush() {
+        val needsPrompt = Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        if (needsPrompt) {
+            Herald.requestPushAuthorization(this)
+        } else {
+            Herald.setSubscription(SubscriptionChannel.PUSH, SubscriptionState.OPTED_IN)
         }
     }
 

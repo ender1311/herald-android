@@ -1,6 +1,7 @@
 package com.herald.ui
 
 import android.content.Context
+import android.content.res.Resources
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -24,8 +25,8 @@ import java.net.URL
 
 /**
  * A small image loader for card and message images: HttpURLConnection, an in-memory LRU cache sized
- * in bytes, and downsampling to the size the view needs. Also reads content://, file:// and
- * android.resource:// URIs, so apps can ship images in their own resources.
+ * in bytes, and downsampling to the size the view needs. Also reads android.resource:// URIs, so apps
+ * can ship images in their own resources.
  */
 internal object HeraldImages {
     private const val MAX_BYTES = 10 * 1024 * 1024
@@ -37,21 +38,34 @@ internal object HeraldImages {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount
     }
 
-    fun cached(url: String, maxWidthPx: Int): Bitmap? = cache.get(key(url, maxWidthPx))
+    /** Decoded images never exceed this many pixels (16 MB as ARGB_8888). */
+    const val MAX_PIXELS = 4_000_000
+
+    fun cached(url: String, maxWidthPx: Int): Bitmap? = cache.get(key(url, targetWidth(maxWidthPx)))
 
     /** Loads on the IO dispatcher. Returns null (and logs) on any failure. */
     suspend fun load(context: Context, url: String, maxWidthPx: Int): Bitmap? {
-        cached(url, maxWidthPx)?.let { return it }
+        val width = targetWidth(maxWidthPx)
+        cache.get(key(url, width))?.let { return it }
         return withContext(Dispatchers.IO) {
             try {
                 val bytes = read(context, url) ?: return@withContext null
-                decode(bytes, maxWidthPx)?.also { cache.put(key(url, maxWidthPx), it) }
+                decode(bytes, width)?.also { cache.put(key(url, width), it) }
             } catch (e: Exception) {
-                Log.w("Herald", "Image load failed for $url (${e.javaClass.simpleName})")
+                Log.w("Herald", "Image load failed for ${Uri.parse(url).host} (${e.javaClass.simpleName})")
+                null
+            } catch (e: OutOfMemoryError) {
+                Log.w("Herald", "Image too large to decode from ${Uri.parse(url).host}")
                 null
             }
         }
     }
+
+    /** The view width, or the display width when the view's width is unbounded or unknown. */
+    private fun targetWidth(maxWidthPx: Int) = clampWidth(maxWidthPx, Resources.getSystem().displayMetrics.widthPixels)
+
+    fun clampWidth(requested: Int, displayWidth: Int): Int =
+        if (requested <= 0 || requested > displayWidth) displayWidth.coerceAtLeast(1) else requested
 
     private fun key(url: String, maxWidthPx: Int) = "$maxWidthPx|$url"
 
@@ -69,7 +83,8 @@ internal object HeraldImages {
                     connection.disconnect()
                 }
             }
-            "content", "file", "android.resource" -> context.contentResolver.openInputStream(uri)?.use(::readCapped)
+            // Only the app's own resources: server-supplied file:// or content:// URLs could expose private data.
+            "android.resource" -> context.contentResolver.openInputStream(uri)?.use(::readCapped)
             else -> null
         }
     }
@@ -90,14 +105,21 @@ internal object HeraldImages {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0) return null
-        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize(bounds.outWidth, maxWidthPx) }
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        val sample = sampleSize(bounds.outWidth, bounds.outHeight, maxWidthPx, maxWidthPx * 2)
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
-    /** Largest power of two that keeps the decoded width at or above [maxWidthPx]. */
-    fun sampleSize(width: Int, maxWidthPx: Int): Int {
+    /**
+     * Smallest power of two that brings the decoded image within [maxWidth] x [maxHeight] and [MAX_PIXELS],
+     * so tall or huge images cannot exhaust memory.
+     */
+    fun sampleSize(width: Int, height: Int, maxWidth: Int, maxHeight: Int): Int {
         var sample = 1
-        while (maxWidthPx > 0 && width / (sample * 2) >= maxWidthPx) sample *= 2
+        while (
+            width / sample > maxWidth ||
+            height / sample > maxHeight ||
+            (width / sample).toLong() * (height / sample) > MAX_PIXELS
+        ) sample *= 2
         return sample
     }
 }

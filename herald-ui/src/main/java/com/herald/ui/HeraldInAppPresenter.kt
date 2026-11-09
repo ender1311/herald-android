@@ -61,10 +61,16 @@ class HeraldInAppPresenter @JvmOverloads constructor(
     var customViews: Map<InAppMessageType, InAppMessageContent> = emptyMap(),
 ) : InAppMessagePresenter {
 
+    /** The message on screen, until the user dismisses it. */
     private var current: Session? = null
 
+    /** Every overlay still attached, including one animating out. */
+    private val attached = mutableListOf<Session>()
+
     override fun present(activity: Activity, message: InAppMessage, callbacks: InAppMessageCallbacks): Boolean {
-        if (current != null) return false
+        // Wait until the previous overlay is gone: overlapping overlays would corrupt the
+        // accessibility state they save and restore. Herald retries on the next resume.
+        if (current != null || attached.isNotEmpty()) return false
         if (activity !is ComponentActivity || activity.isFinishing || activity.isDestroyed) return false
         if (!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return false
         val decor = activity.window?.decorView as? ViewGroup ?: return false
@@ -140,6 +146,7 @@ class HeraldInAppPresenter @JvmOverloads constructor(
                 }
             }
             decor.addView(view, params)
+            attached += this
             activity.onBackPressedDispatcher.addCallback(activity, back)
             activity.lifecycle.addObserver(lifecycleObserver)
         }
@@ -229,6 +236,7 @@ class HeraldInAppPresenter @JvmOverloads constructor(
             activity.lifecycle.removeObserver(lifecycleObserver)
             hiddenSiblings.forEach { (child, previous) -> child.importantForAccessibility = previous }
             decor.removeView(view)
+            attached -= this
             if (current === this) current = null
         }
     }
