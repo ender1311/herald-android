@@ -31,6 +31,12 @@ data class HeraldPushPayload(
         const val KEY_BODY = "body"
         const val KEY_IMAGE = "image"
 
+        /** Intent extra (Int) with the id of the notification herald-fcm posted, so a tap can clear it. */
+        const val KEY_NOTIFICATION_ID = "herald_notification_id"
+
+        /** Tag herald-fcm posts its notifications under. */
+        const val NOTIFICATION_TAG = "herald"
+
         /** Parses an FCM `RemoteMessage.data` map; null when the message is not from Herald. */
         fun fromData(data: Map<String, String>): HeraldPushPayload? {
             if (data[KEY_DECISION_ID] == null && data[KEY_MESSAGE_ID] == null) return null

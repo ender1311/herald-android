@@ -51,11 +51,25 @@ internal class InAppEngine(
 
     private var presentingUserKey: String? = null
 
+    /** What [recordShown] replaced, so [revertShown] can undo a display the activity never let the user finish. */
+    private var undo: Triple<String, Long?, Long?>? = null
+
     /** The presenter confirmed the message is visible: spend re-eligibility and start the interval. */
     fun recordShown(message: InAppMessage) {
         val now = clock()
+        val key = "${presentingUserKey ?: userKey()}|${message.id}"
+        undo = Triple(key, lastShown[key], lastDisplayAt)
         lastDisplayAt = now
-        lastShown["${presentingUserKey ?: userKey()}|${message.id}"] = now
+        lastShown[key] = now
+    }
+
+    /** Undoes the last [recordShown] for [message]: eligibility and the interval are as before it showed. */
+    fun revertShown(message: InAppMessage) {
+        val (key, previousShown, previousDisplayAt) = undo ?: return
+        if (!key.endsWith("|${message.id}")) return
+        if (previousShown == null) lastShown.remove(key) else lastShown[key] = previousShown
+        lastDisplayAt = previousDisplayAt
+        undo = null
     }
 
     fun markDismissed() {

@@ -216,6 +216,7 @@ object Herald {
             intent?.removeExtra(HeraldPushPayload.KEY_DECISION_ID)
             intent?.removeExtra(HeraldPushPayload.KEY_MESSAGE_ID)
             intent?.removeExtra(HeraldPushPayload.KEY_DEEPLINK)
+            cancelNotification(intent)
             val messageId = payload.messageId ?: payload.decisionId ?: return false
             submit { it.onPushOpened(messageId, payload.decisionId) }
             payload.deeplink?.let(::openUrl)
@@ -224,6 +225,15 @@ object Herald {
     } catch (e: Exception) {
         HeraldLog.error("handleNotificationIntent failed", e)
         false
+    }
+
+    /** Action-button taps do not auto-cancel a notification, so clear the one the tap came from. */
+    private fun cancelNotification(intent: Intent?) {
+        val id = intent?.getIntExtra(HeraldPushPayload.KEY_NOTIFICATION_ID, Int.MIN_VALUE) ?: return
+        if (id == Int.MIN_VALUE) return
+        intent.removeExtra(HeraldPushPayload.KEY_NOTIFICATION_ID)
+        val manager = appContext?.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        manager?.cancel(HeraldPushPayload.NOTIFICATION_TAG, id)
     }
 
     // Content cards
@@ -246,6 +256,23 @@ object Herald {
     /** Shows the most recent message held with [InAppDisplayDecision.LATER], if no message is on screen. */
     @JvmStatic
     fun showNext() = submit { it.showNext() }
+
+    /**
+     * Debug and preview only, not for production use: replaces the current cards and in-app messages in
+     * memory with a `GET /api/v1/sdk/messages` response body (for example the shared `messages.json`
+     * fixture). Nothing is persisted; the next sync replaces them.
+     */
+    @JvmStatic
+    fun debugLoadMessages(json: String) = submit { core ->
+        if (!core.debugLoadMessages(json)) HeraldLog.warn("debugLoadMessages: unreadable body")
+    }
+
+    /**
+     * Debug and preview only: shows a message loaded with [debugLoadMessages] (or synced) now, skipping its
+     * trigger, re-eligibility and the minimum interval. Ignored while a message is on screen.
+     */
+    @JvmStatic
+    fun debugShowInAppMessage(messageId: String) = submit { it.debugShowInAppMessage(messageId) }
 
     /** Opens a deep link or URL with ACTION_VIEW. Presenters use it for button and click actions. */
     @JvmStatic

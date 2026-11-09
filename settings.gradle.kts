@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "herald-android"
-include(":herald-core")
+include(":herald-core", ":herald-ui", ":herald-fcm", ":sample")

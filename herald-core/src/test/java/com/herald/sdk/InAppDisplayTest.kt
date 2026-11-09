@@ -108,11 +108,32 @@ class InAppDisplayTest {
     }
 
     @Test
-    fun presenterGoneFreesTheScreen() {
+    fun presenterGoneFreesTheScreenAndRetriesOnNextResume() {
         core.track("workout_completed", mapOf("minutes" to 32))
-        core.presenterGone(shown.single())
+        core.presenterGone(shown.single()) // activity destroyed (rotation) before the user dismissed
         assertNull(core.engine.onScreen)
         assertFalse(interactions().any { it.getString("action") == "dismiss" && it.getString("messageId") == "msg_2" })
+        assertEquals(listOf("msg_2"), core.undeliveredIds)
+
+        // The display was undone, so the once-only message and the interval are not spent.
+        core.retryUndelivered() // recreated activity resumed, no clock advance
+        assertEquals(listOf("msg_2", "msg_2"), shown.map { it.id })
+        core.onInAppDismiss(shown.last())
+        h.clock.advance(60_000)
+        core.track("workout_completed", mapOf("minutes" to 32))
+        assertEquals(2, shown.size) // now spent
+    }
+
+    @Test
+    fun debugHooksLoadAndShowWithoutTriggers() {
+        assertTrue(core.debugLoadMessages(fixture("messages.json")))
+        assertEquals(3, core.engine.messages.size)
+        assertFalse(core.debugLoadMessages("not json"))
+        assertTrue(core.debugShowInAppMessage("msg_6"))
+        assertEquals("msg_6", shown.single().id)
+        assertFalse(core.debugShowInAppMessage("msg_2")) // one at a time
+        core.onInAppDismiss(shown.single())
+        assertFalse(core.debugShowInAppMessage("missing"))
     }
 
     @Test

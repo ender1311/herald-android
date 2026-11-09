@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Override these in your app's resources to change or translate them. -->
+<resources>
+    <string name="herald_close">Close</string>
+    <string name="herald_dismiss">Dismiss</string>
+    <string name="herald_feed_empty">No updates right now</string>
+</resources>

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Override in your app's resources to rename or translate the default notification channel. -->
+<resources>
+    <string name="herald_default_channel_name">Notifications</string>
+</resources>

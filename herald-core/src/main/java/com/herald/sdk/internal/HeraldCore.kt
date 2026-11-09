@@ -524,9 +524,31 @@ internal class HeraldCore(
         }
     }
 
-    /** The activity showing the message went away without onDismiss: free the screen, log nothing. */
+    /**
+     * The activity showing the message was destroyed before the user dismissed it (rotation, finish):
+     * free the screen, log nothing, undo the display and keep the message for the next activity resume.
+     */
     fun presenterGone(message: InAppMessage) {
-        if (engine.onScreen?.id == message.id) engine.markDismissed()
+        if (engine.onScreen?.id != message.id) return
+        engine.markDismissed()
+        engine.revertShown(message)
+        if (message.id !in state.undeliveredIds) state.undeliveredIds.add(message.id)
+        state.save()
+    }
+
+    /** Debug and preview only: replaces the cards and in-app messages in memory, without persisting. */
+    fun debugLoadMessages(body: String): Boolean {
+        val payload = MessageParser.parse(body) ?: return false
+        apply(payload)
+        return true
+    }
+
+    /** Debug and preview only: presents a loaded in-app message now, skipping triggers, eligibility and interval. */
+    fun debugShowInAppMessage(messageId: String): Boolean {
+        if (engine.onScreen != null) return false
+        val message = engine.messages.firstOrNull { it.id == messageId } ?: return false
+        present(message)
+        return true
     }
 
     fun onInAppImpression(message: InAppMessage) =
