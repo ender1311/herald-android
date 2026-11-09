@@ -74,6 +74,9 @@ object Herald {
     @Volatile
     private var options = HeraldOptions()
     private var flushTicker: Job? = null
+
+    /** SDK thread only: wakes the core when the in-app minimum interval runs out. */
+    private var showRetry: Job? = null
     private var startedActivities = 0
 
     @Volatile
@@ -118,6 +121,7 @@ object Herald {
                             it.display = ::display
                             it.dismissDisplay = ::dismissDisplay
                             it.delegate = { inAppMessageDelegate }
+                            it.scheduleShowRetry = ::scheduleShowRetry
                         }
                     }
                 } finally {
@@ -285,7 +289,11 @@ object Herald {
 
     // In-app messages
 
-    /** Shows the most recent message held with [InAppDisplayDecision.LATER], if no message is on screen. */
+    /**
+     * Shows the highest-priority pending message now (for example one the delegate deferred with
+     * [InAppDisplayDecision.LATER]), skipping the minimum interval. The delegate is asked again.
+     * Does nothing while another message is on screen.
+     */
     @JvmStatic
     fun showNext() = submit { it.showNext() }
 
@@ -369,6 +377,18 @@ object Herald {
         return true
     }
 
+    private fun scheduleShowRetry(delayMs: Long) {
+        showRetry?.cancel()
+        showRetry = scope?.launch {
+            delay(delayMs.coerceAtLeast(100))
+            try {
+                core?.showPendingIfPossible()
+            } catch (e: Exception) {
+                HeraldLog.error("In-app retry failed", e)
+            }
+        }
+    }
+
     private fun dismissDisplay() {
         val presenter = inAppMessagePresenter ?: return
         mainHandler.post {
@@ -420,7 +440,7 @@ object Herald {
                 val enabled = notificationsEnabled(activity)
                 submit { it.recordPushAuthorization(enabled) }
             }
-            submit { it.retryUndelivered() }
+            submit { it.showPendingIfPossible() }
         }
 
         override fun onActivityPaused(activity: Activity) {

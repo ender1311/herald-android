@@ -31,7 +31,7 @@ internal class StateStore(private val file: File) {
     var messagesBody: String? = null
     val dismissedCardIds: MutableSet<String> = mutableSetOf()
     val lastShown: MutableMap<String, Long> = mutableMapOf()
-    /** Triggered in-app messages that no presenter could draw yet; retried on activity resume. */
+    /** Triggered in-app messages not shown yet, oldest first (persisted key kept from the first release). */
     val undeliveredIds: MutableList<String> = mutableListOf()
     /** Recently counted push opens (decision or message ids), oldest first. */
     val recentPushOpens: MutableList<String> = mutableListOf()

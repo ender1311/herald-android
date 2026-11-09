@@ -51,8 +51,8 @@ internal class HeraldCore(
     var dismissDisplay: (() -> Unit)? = null
     var delegate: () -> InAppMessageDelegate? = { null }
 
-    /** Messages the delegate answered LATER for; shown only through [showNext]. */
-    private val held = ArrayDeque<InAppMessage>()
+    /** Asks the facade to call [showPendingIfPossible] after this many ms (the minimum interval's rest). */
+    var scheduleShowRetry: ((Long) -> Unit)? = null
     private val impressedThisSession = mutableSetOf<String>()
     private var clickedOnScreen = false
     private var foreground = false
@@ -86,6 +86,7 @@ internal class HeraldCore(
             sessionTriggerDue = false
             trigger(TriggerEvent(TriggerType.SESSION_START))
         }
+        showPendingIfPossible()
     }
 
     fun onBackground() {
@@ -187,7 +188,6 @@ internal class HeraldCore(
         // lastShown stays: display history is keyed per user and only wipeData clears it.
         state.undeliveredIds.clear()
         engine.messages = emptyList()
-        held.clear()
         impressedThisSession.clear()
         contentCards.value = emptyList()
         if (engine.onScreen != null) {
@@ -514,54 +514,61 @@ internal class HeraldCore(
 
     // region in-app
 
+    /**
+     * Evaluates a trigger, as on iOS: the winning message joins the pending list and shows as soon as nothing
+     * else is on screen, the minimum interval has passed and the app is in the foreground.
+     */
     fun trigger(event: TriggerEvent) {
         if (!state.enabled) return
-        val message = engine.evaluate(event) ?: return
+        val message = engine.candidate(event) ?: return
+        if (message.id !in state.undeliveredIds) {
+            state.undeliveredIds.add(message.id)
+            state.save()
+        }
+        showPendingIfPossible()
+    }
+
+    /** Shows the highest-priority pending message now, ignoring the minimum interval (the delegate is still asked). */
+    fun showNext(): Boolean = showPendingIfPossible(ignoringInterval = true)
+
+    /**
+     * Offers the highest-priority pending message (ties: the oldest) when one may show now; otherwise it stays
+     * pending. Called on triggers, foreground, every activity resume, after a message closes, and when the
+     * minimum interval runs out. The delegate is asked here, at display time: LATER keeps the message pending
+     * for the next of these, DISCARD drops it. Returns true when the message was handed to the presenter.
+     */
+    fun showPendingIfPossible(ignoringInterval: Boolean = false): Boolean {
+        if (!state.enabled || !foreground || engine.onScreen != null) return false
+        val pending = state.undeliveredIds.mapNotNull { id -> engine.messages.firstOrNull { it.id == id } }
+            .filter { engine.isLive(it) && engine.isEligible(it) }
+        if (pending.size != state.undeliveredIds.size) {
+            state.undeliveredIds.retainAll(pending.map { it.id }.toSet())
+            state.save()
+        }
+        val message = engine.best(pending) ?: return false
+        if (!ignoringInterval && !engine.intervalElapsed()) {
+            scheduleShowRetry?.invoke(engine.intervalRemainingMs())
+            return false
+        }
         val decision = try {
             delegate()?.shouldDisplay(message) ?: InAppDisplayDecision.DISPLAY
         } catch (e: Exception) {
             HeraldLog.error("InAppMessageDelegate threw; displaying", e)
             InAppDisplayDecision.DISPLAY
         }
-        when (decision) {
-            InAppDisplayDecision.DISPLAY -> present(message)
-            InAppDisplayDecision.LATER -> hold(message)
-            InAppDisplayDecision.DISCARD -> HeraldLog.debug("In-app message ${message.id} discarded by delegate")
-        }
-    }
-
-    private fun hold(message: InAppMessage) {
-        held.removeAll { it.id == message.id }
-        held.addLast(message)
-        while (held.size > MAX_HELD) held.removeFirst()
-    }
-
-    /** Displays the most recently held message, if nothing is on screen. Skips the delegate and interval. */
-    fun showNext(): Boolean {
-        if (engine.onScreen != null) return false
-        while (held.isNotEmpty()) {
-            val message = held.removeLast()
-            if (engine.isLive(message)) {
+        return when (decision) {
+            InAppDisplayDecision.DISPLAY -> {
                 present(message)
-                return true
+                true
+            }
+            InAppDisplayDecision.LATER -> false
+            InAppDisplayDecision.DISCARD -> {
+                HeraldLog.debug("In-app message ${message.id} discarded by delegate")
+                state.undeliveredIds.remove(message.id)
+                state.save()
+                false
             }
         }
-        return false
-    }
-
-    /**
-     * Retries triggered messages that could not be drawn (no activity or presenter at the time).
-     * The facade calls it on every activity resume. Still one message at a time, after the interval.
-     */
-    fun retryUndelivered() {
-        if (!state.enabled || engine.onScreen != null || !engine.intervalElapsed()) return
-        val candidates = state.undeliveredIds.mapNotNull { id -> engine.messages.firstOrNull { it.id == id } }
-        val live = candidates.filter { engine.isLive(it) && engine.isEligible(it) }
-        if (live.size != state.undeliveredIds.size) {
-            state.undeliveredIds.retainAll(live.map { it.id }.toSet())
-            state.save()
-        }
-        live.maxByOrNull { it.priority }?.let(::present)
     }
 
     private fun present(message: InAppMessage) {
@@ -638,10 +645,10 @@ internal class HeraldCore(
         if (engine.onScreen?.id != message.id) return
         engine.markDismissed()
         if (!clickedOnScreen) logInteraction(message.id, "in_app", "dismiss", message.decisionId)
+        showPendingIfPossible()
     }
 
-    val heldCount: Int get() = held.size
-    val undeliveredIds: List<String> get() = state.undeliveredIds.toList()
+    val pendingIds: List<String> get() = state.undeliveredIds.toList()
 
     // endregion
 
@@ -675,7 +682,6 @@ internal class HeraldCore(
         const val QUEUE_CAP = 1000
         const val MAX_BATCH_EVENTS = 100
         const val MAX_BATCH_BYTES = 512 * 1024
-        const val MAX_HELD = 20
         const val MAX_RECENT_OPENS = 50
     }
 }

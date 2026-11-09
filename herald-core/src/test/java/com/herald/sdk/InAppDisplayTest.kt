@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Delegate decisions, held and undelivered messages, and interaction logging through the core. */
+/** Delegate decisions, pending messages, and interaction logging through the core. */
 class InAppDisplayTest {
     private val h = CoreHarness()
     private val core = h.newCore()
@@ -43,22 +43,76 @@ class InAppDisplayTest {
     }
 
     @Test
-    fun laterHoldsForShowNextWithoutDuplicatesAndDiscardDrops() {
-        core.delegate = { InAppMessageDelegate { InAppDisplayDecision.LATER } }
+    fun laterStaysPendingAndIsReOfferedAutomatically() {
+        val asked = mutableListOf<String>()
+        var decision = InAppDisplayDecision.LATER
+        core.delegate = { InAppMessageDelegate { asked += it.id; decision } }
         core.track("workout_completed", mapOf("minutes" to 32))
-        h.clock.advance(60_000)
         core.track("workout_completed", mapOf("minutes" to 40))
         assertTrue(shown.isEmpty())
-        assertEquals(1, core.heldCount)
-        assertTrue(core.showNext())
-        assertEquals("msg_2", shown.single().id)
+        assertEquals(listOf("msg_2"), core.pendingIds) // no duplicate
+        assertEquals(listOf("msg_2", "msg_2"), asked) // asked again at each display attempt
 
-        core.onInAppDismiss(shown.single())
-        h.clock.advance(60_000)
+        decision = InAppDisplayDecision.DISPLAY
+        core.showPendingIfPossible() // next activity resume
+        assertEquals("msg_2", shown.single().id)
+        assertTrue(core.pendingIds.isEmpty())
+    }
+
+    @Test
+    fun discardDropsThePendingMessage() {
         core.delegate = { InAppMessageDelegate { InAppDisplayDecision.DISCARD } }
         core.trigger(TriggerEvent(TriggerType.PUSH_OPEN))
-        assertEquals(0, core.heldCount)
+        assertTrue(core.pendingIds.isEmpty())
+        core.delegate = { null }
+        core.showPendingIfPossible()
+        assertTrue(shown.isEmpty())
+    }
+
+    @Test
+    fun triggerWhileAnotherIsOnScreenShowsAfterItClosesAndTheIntervalRunsOut() {
+        val asked = mutableListOf<String>()
+        core.delegate = { InAppMessageDelegate { asked += it.id; InAppDisplayDecision.DISPLAY } }
+        val retries = mutableListOf<Long>()
+        core.scheduleShowRetry = { retries += it }
+        core.track("workout_completed", mapOf("minutes" to 32))
+        val first = shown.single()
+        core.onPushOpened("dec_9", "dec_9") // msg_6 matches while msg_2 is on screen
+        assertEquals(listOf("msg_6"), core.pendingIds)
+        assertEquals(listOf("msg_2"), asked) // the delegate is asked at display time, not at the trigger
+
+        h.clock.advance(10_000)
+        core.onInAppDismiss(first) // closed, but the 30 s minimum interval is still running
         assertEquals(1, shown.size)
+        assertEquals(listOf(20_000L), retries)
+
+        h.clock.advance(20_000)
+        core.showPendingIfPossible() // the scheduled retry fires
+        assertEquals(listOf("msg_2", "msg_6"), shown.map { it.id })
+        assertEquals(listOf("msg_2", "msg_6"), asked)
+    }
+
+    @Test
+    fun showNextShowsTheHighestPriorityPendingOldestFirstOnTiesAndSkipsTheInterval() {
+        val base = core.engine.messages.first { it.id == "msg_6" }
+        core.engine.messages = listOf(
+            base.copy(id = "low", priority = 1),
+            base.copy(id = "tie_new", priority = 7, trigger = base.trigger.copy(type = TriggerType.EVENT, event = "b")),
+            base.copy(id = "tie_old", priority = 7, trigger = base.trigger.copy(type = TriggerType.EVENT, event = "a")),
+        )
+        core.delegate = { InAppMessageDelegate { InAppDisplayDecision.LATER } }
+        core.trigger(TriggerEvent(TriggerType.PUSH_OPEN)) // low
+        core.track("a", emptyMap()) // tie_old
+        core.track("b", emptyMap()) // tie_new
+        assertEquals(listOf("low", "tie_old", "tie_new"), core.pendingIds)
+
+        core.delegate = { null }
+        core.engine.beginPresenting(base) // another message on screen
+        assertFalse(core.showNext())
+        core.engine.recordShown(base) // starts the minimum interval
+        core.engine.markDismissed()
+        assertTrue(core.showNext()) // ignores the interval
+        assertEquals("tie_old", shown.single().id)
     }
 
     @Test
@@ -66,17 +120,17 @@ class InAppDisplayTest {
         core.display = { false } // between activities: nothing can draw
         core.track("workout_completed", mapOf("minutes" to 32))
         assertNull(core.engine.onScreen)
-        assertEquals(listOf("msg_2"), core.undeliveredIds)
+        assertEquals(listOf("msg_2"), core.pendingIds)
 
         // Not marked shown and the interval did not start: another trigger can still show at once.
         core.display = presenterAvailable
-        core.retryUndelivered() // activity resumed
+        core.showPendingIfPossible() // activity resumed
         assertEquals("msg_2", shown.single().id)
-        assertTrue(core.undeliveredIds.isEmpty())
+        assertTrue(core.pendingIds.isEmpty())
         core.onInAppDismiss(shown.single())
 
         h.clock.advance(60_000)
-        core.retryUndelivered()
+        core.showPendingIfPossible()
         core.track("workout_completed", mapOf("minutes" to 32))
         assertEquals(1, shown.size) // once-only now spent
     }
@@ -93,7 +147,7 @@ class InAppDisplayTest {
         val restarted = h.newCore()
         val drawn = mutableListOf<InAppMessage>()
         restarted.display = { drawn += it; restarted.presentAccepted(it); true }
-        restarted.retryUndelivered()
+        restarted.onForeground() // shows pending messages
         assertEquals("msg_2", drawn.single().id)
     }
 
@@ -104,7 +158,7 @@ class InAppDisplayTest {
         h.clock.advance(365L * 24 * 3_600_000)
         h.transport.messagesResponse = { com.herald.sdk.internal.HttpResponse(200, emptyMap(), fixture("messages-empty.json")) }
         core.syncMessages()
-        assertTrue(core.undeliveredIds.isEmpty())
+        assertTrue(core.pendingIds.isEmpty())
     }
 
     @Test
@@ -113,10 +167,10 @@ class InAppDisplayTest {
         core.presenterGone(shown.single()) // activity destroyed (rotation) before the user dismissed
         assertNull(core.engine.onScreen)
         assertFalse(interactions().any { it.getString("action") == "dismiss" && it.getString("messageId") == "msg_2" })
-        assertEquals(listOf("msg_2"), core.undeliveredIds)
+        assertEquals(listOf("msg_2"), core.pendingIds)
 
         // The display was undone, so the once-only message and the interval are not spent.
-        core.retryUndelivered() // recreated activity resumed, no clock advance
+        core.showPendingIfPossible() // recreated activity resumed, no clock advance
         assertEquals(listOf("msg_2", "msg_2"), shown.map { it.id })
         core.onInAppDismiss(shown.last())
         h.clock.advance(60_000)
@@ -173,7 +227,7 @@ class InAppDisplayTest {
         core.presentAccepted(message)
         core.presentFailed(message)
         assertTrue(core.engine.lastShown.keys.none { it.endsWith("|msg_2") })
-        assertTrue(core.undeliveredIds.isEmpty())
+        assertFalse("msg_2" in core.pendingIds) // u_2's own session_start message may be pending
 
         core.identify("u_1", emptyMap())
         h.clock.advance(60_000)

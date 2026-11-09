@@ -73,8 +73,9 @@ data class InAppMessage(
 enum class InAppDisplayDecision { DISPLAY, LATER, DISCARD }
 
 /**
- * Lets the app hold or drop a triggered message. Called on the SDK's background thread;
- * return quickly. LATER keeps the message for [Herald.showNext].
+ * Lets the app show, hold or drop a triggered message. Asked at display time, on the SDK's background
+ * thread; return quickly. LATER keeps the message pending: it is offered again (and the delegate asked
+ * again) on the next trigger, foreground, activity resume or message close, or by [Herald.showNext].
  */
 fun interface InAppMessageDelegate {
     fun shouldDisplay(message: InAppMessage): InAppDisplayDecision

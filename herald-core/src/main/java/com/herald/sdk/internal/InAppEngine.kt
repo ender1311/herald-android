@@ -13,9 +13,9 @@ internal data class TriggerEvent(
 )
 
 /**
- * Picks the in-app message for a trigger: matching trigger and filters, unexpired, re-eligible,
- * highest priority (first wins a tie), at least [minIntervalMs] after the last triggered display,
- * and never while another Herald message is on screen.
+ * Picks the in-app message for a trigger: matching trigger and filters, unexpired, re-eligible, highest
+ * priority (first wins a tie). Whether it may show now (nothing on screen, at least [minIntervalMs] after the
+ * last display) is checked separately, so a message that cannot show yet stays pending.
  */
 internal class InAppEngine(
     private val clock: () -> Long,
@@ -30,17 +30,21 @@ internal class InAppEngine(
         private set
     private var lastDisplayAt: Long? = null
 
-    fun evaluate(trigger: TriggerEvent): InAppMessage? {
-        if (onScreen != null) return null
+    fun candidate(trigger: TriggerEvent): InAppMessage? {
         val now = clock()
-        if (!intervalElapsed()) return null
-        return messages
-            .filter { matches(it, trigger) && isLive(it, now) && isEligible(it, now) }
-            .maxByOrNull { it.priority }
+        return best(messages.filter { matches(it, trigger) && isLive(it, now) && isEligible(it, now) })
     }
 
+    /** Highest priority; on a tie the first in [candidates] wins (`maxByOrNull` keeps the first maximum). */
+    fun best(candidates: List<InAppMessage>): InAppMessage? = candidates.maxByOrNull { it.priority }
+
+    /** Nothing on screen and the minimum interval has passed. */
+    fun canShow(): Boolean = onScreen == null && intervalElapsed()
+
     /** Whether the min interval since the last confirmed display has passed. */
-    fun intervalElapsed(): Boolean = lastDisplayAt?.let { clock() - it >= minIntervalMs } ?: true
+    fun intervalElapsed(): Boolean = intervalRemainingMs() <= 0
+
+    fun intervalRemainingMs(): Long = lastDisplayAt?.let { it + minIntervalMs - clock() } ?: 0
 
     /** Reserves the screen while a presenter is asked to show [message]; blocks other messages. */
     fun beginPresenting(message: InAppMessage) {

@@ -24,11 +24,11 @@ class InAppEngineTest {
 
     @Test
     fun matchesTriggerTypeEventNameAndFilters() {
-        assertEquals("msg_2", engine.evaluate(workout)?.id)
-        assertNull(engine.evaluate(workout.copy(properties = mapOf("minutes" to 10))))
-        assertNull(engine.evaluate(workout.copy(name = "other")))
-        assertEquals("msg_5", engine.evaluate(TriggerEvent(TriggerType.SESSION_START))?.id)
-        assertEquals("msg_6", engine.evaluate(TriggerEvent(TriggerType.PUSH_OPEN))?.id)
+        assertEquals("msg_2", engine.candidate(workout)?.id)
+        assertNull(engine.candidate(workout.copy(properties = mapOf("minutes" to 10))))
+        assertNull(engine.candidate(workout.copy(name = "other")))
+        assertEquals("msg_5", engine.candidate(TriggerEvent(TriggerType.SESSION_START))?.id)
+        assertEquals("msg_6", engine.candidate(TriggerEvent(TriggerType.PUSH_OPEN))?.id)
     }
 
     @Test
@@ -37,51 +37,55 @@ class InAppEngineTest {
         val high = modal.copy(id = "high", priority = 50)
         val tie = modal.copy(id = "tie", priority = 50)
         engine.messages = listOf(low, high, tie)
-        assertEquals("high", engine.evaluate(workout)?.id)
+        assertEquals("high", engine.candidate(workout)?.id)
+        // Pending lists are passed oldest first, so a tie goes to the oldest pending message.
+        assertEquals("tie", engine.best(listOf(low, tie, high))?.id)
     }
 
     @Test
     fun minimumIntervalBetweenDisplays() {
-        engine.show(engine.evaluate(TriggerEvent(TriggerType.SESSION_START))!!)
+        engine.show(engine.candidate(TriggerEvent(TriggerType.SESSION_START))!!)
         engine.markDismissed()
         clock.advance(29_000)
-        assertNull(engine.evaluate(workout))
+        assertEquals("msg_2", engine.candidate(workout)?.id) // still a candidate: it goes pending
+        assertFalse(engine.canShow())
+        assertEquals(1_000L, engine.intervalRemainingMs())
         clock.advance(1_000)
-        assertEquals("msg_2", engine.evaluate(workout)?.id)
+        assertTrue(engine.canShow())
     }
 
     @Test
     fun neverOverAnotherMessage() {
-        engine.show(engine.evaluate(TriggerEvent(TriggerType.SESSION_START))!!)
+        engine.show(engine.candidate(TriggerEvent(TriggerType.SESSION_START))!!)
         clock.advance(60_000)
-        assertNull(engine.evaluate(workout))
+        assertFalse(engine.canShow())
         engine.markDismissed()
-        assertEquals("msg_2", engine.evaluate(workout)?.id)
+        assertTrue(engine.canShow())
     }
 
     @Test
     fun onceAndAfterHoursReEligibility() {
-        engine.show(engine.evaluate(workout)!!)
+        engine.show(engine.candidate(workout)!!)
         engine.markDismissed()
         clock.advance(48 * 3_600_000L)
-        assertNull(engine.evaluate(workout))
+        assertNull(engine.candidate(workout))
         user = "u_2" // history is per user
-        assertEquals("msg_2", engine.evaluate(workout)?.id)
+        assertEquals("msg_2", engine.candidate(workout)?.id)
         user = "u_1"
 
         val session = TriggerEvent(TriggerType.SESSION_START)
-        engine.show(engine.evaluate(session)!!)
+        engine.show(engine.candidate(session)!!)
         engine.markDismissed()
         clock.advance(23 * 3_600_000L)
-        assertNull(engine.evaluate(session))
+        assertNull(engine.candidate(session))
         clock.advance(3_600_000L)
-        assertEquals("msg_5", engine.evaluate(session)?.id)
+        assertEquals("msg_5", engine.candidate(session)?.id)
     }
 
     @Test
     fun expiredMessagesNeverMatch() {
         engine.messages = listOf(modal.copy(expiresAt = clock.now - 1))
-        assertNull(engine.evaluate(workout))
+        assertNull(engine.candidate(workout))
     }
 
     @Test

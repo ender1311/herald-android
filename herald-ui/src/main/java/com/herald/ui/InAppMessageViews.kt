@@ -49,6 +49,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.semantics.SemanticsPropertyReceiver
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -117,6 +119,9 @@ internal fun messageColors(style: InAppStyle, theme: HeraldTheme): MessageColors
     )
 }
 
+/** TalkBack announces the message header as a heading, as VoiceOver does on iOS. */
+internal val headerSemantics: SemanticsPropertyReceiver.() -> Unit = { heading() }
+
 @Composable
 private fun MessageText(
     message: InAppMessage,
@@ -131,7 +136,7 @@ private fun MessageText(
             style = theme.typography.title,
             color = colors.text,
             textAlign = align,
-            modifier = Modifier.fillMaxWidth().padding(horizontal = headerInset),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = headerInset).semantics(properties = headerSemantics),
         )
     }
     message.content.body?.let {
