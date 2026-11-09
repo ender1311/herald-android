@@ -12,6 +12,8 @@ if (file("google-services.json").exists()) apply(plugin = "com.google.gms.google
 // Endpoint and app key come from sdks/android/local.properties (gitignored):
 //   herald.endpoint=https://your-herald.example.com
 //   herald.appKey=pk_live_...
+// Debug builds only (end-to-end runs): herald.userToken is the identity token for the user the
+// `lumenUser` launch extra names; herald.sessionTimeoutMinutes shortens the session (default 30).
 val localProperties = Properties().apply {
     rootProject.file("local.properties").takeIf { it.exists() }?.inputStream()?.use(::load)
 }
@@ -34,6 +36,17 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    buildTypes {
+        getByName("debug") {
+            buildConfigField("String", "HERALD_USER_TOKEN", "\"${localProperty("herald.userToken", "")}\"")
+            buildConfigField("long", "HERALD_SESSION_TIMEOUT_MINUTES", localProperty("herald.sessionTimeoutMinutes", "30"))
+        }
+        getByName("release") {
+            buildConfigField("String", "HERALD_USER_TOKEN", "\"\"")
+            buildConfigField("long", "HERALD_SESSION_TIMEOUT_MINUTES", "30")
+        }
     }
 
     sourceSets {

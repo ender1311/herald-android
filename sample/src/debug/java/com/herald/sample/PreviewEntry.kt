@@ -1,6 +1,7 @@
 package com.herald.sample
 
 import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.herald.sdk.Herald
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 /** Debug builds: a screen that loads the shared fixtures so every card and message type shows without a server. */
@@ -52,4 +57,24 @@ private fun previewMessages(context: Context): String {
     full.getJSONObject("content").put("imageUrl", image)
     messages.put(full)
     return root.toString()
+}
+
+/**
+ * Launch-extra hooks for end-to-end runs on an emulator, where nothing is tapped:
+ * `--es lumenUser <id>` identifies the user with herald.userToken, `--ez lumenLogWorkout true` logs a
+ * workout, `--ez lumenClickFirstCard true` logs a click on the first card once cards arrive.
+ */
+internal fun debugLaunchHooks(intent: Intent) {
+    intent.getStringExtra("lumenUser")?.let { userId ->
+        Herald.identify(userId, mapOf("plan" to "free"))
+        Herald.setUserToken(BuildConfig.HERALD_USER_TOKEN.ifEmpty { null })
+    }
+    if (intent.getBooleanExtra("lumenLogWorkout", false)) Herald.track("workout_completed", mapOf("minutes" to 32))
+    if (intent.getBooleanExtra("lumenClickFirstCard", false)) {
+        CoroutineScope(Dispatchers.Main).launch {
+            val card = Herald.contentCards.first { it.isNotEmpty() }.first()
+            Herald.logClick(card)
+            Herald.flush()
+        }
+    }
 }

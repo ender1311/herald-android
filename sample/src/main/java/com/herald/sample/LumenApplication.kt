@@ -15,7 +15,10 @@ class LumenApplication : Application() {
             this,
             appKey = BuildConfig.HERALD_APP_KEY,
             endpoint = BuildConfig.HERALD_ENDPOINT,
-            options = HeraldOptions(logLevel = if (BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.WARN),
+            options = HeraldOptions(
+                logLevel = if (BuildConfig.DEBUG) LogLevel.DEBUG else LogLevel.WARN,
+                sessionTimeoutMinutes = BuildConfig.HERALD_SESSION_TIMEOUT_MINUTES,
+            ),
         )
         HeraldInAppPresenter.install()
         HeraldNotifications.createDefaultChannel(this)
