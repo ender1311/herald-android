@@ -16,6 +16,7 @@ import com.herald.sdk.internal.HeraldCore
 import com.herald.sdk.internal.HeraldLog
 import com.herald.sdk.internal.HttpUrlConnectionTransport
 import com.herald.sdk.internal.PendingCalls
+import com.herald.sdk.internal.PushPermissionRequest
 import com.herald.sdk.push.HeraldPushPayload
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -64,8 +65,8 @@ object Herald {
     /** Calls made before [configure]; replayed in order once it runs. */
     private val pending = PendingCalls<(HeraldCore) -> Unit>()
 
-    /** Main thread only: [requestPushAuthorization] showed the prompt; the result is read on the next resume. */
-    private var awaitingPushPermission = false
+    /** Main thread only: the prompt [requestPushAuthorization] showed; its answer is read when it closes. */
+    private val pushPermission = PushPermissionRequest()
 
     @Volatile
     private var appContext: Context? = null
@@ -99,25 +100,29 @@ object Herald {
                 val newScope = CoroutineScope(SupervisorJob() + dispatcher + handler)
                 scope = newScope
                 // File reads happen here, off the caller's thread; later calls queue behind this one.
-                newScope.launch {
-                    val deviceContext = AndroidDeviceContext(app)
-                    core = HeraldCore(
-                        dir = app.filesDir.resolve("herald"),
-                        appKey = appKey,
-                        endpoint = endpoint,
-                        options = options,
-                        transport = HttpUrlConnectionTransport(),
-                        contextProvider = deviceContext::snapshot,
-                        sdkVersion = SDK_VERSION,
-                        bundleId = app.packageName,
-                        contentCards = _contentCards,
-                    ).also {
-                        it.display = ::display
-                        it.dismissDisplay = ::dismissDisplay
-                        it.delegate = { inAppMessageDelegate }
+                // finally: buffered calls must never stay stuck, even if this launch fails.
+                try {
+                    newScope.launch {
+                        val deviceContext = AndroidDeviceContext(app)
+                        core = HeraldCore(
+                            dir = app.filesDir.resolve("herald"),
+                            appKey = appKey,
+                            endpoint = endpoint,
+                            options = options,
+                            transport = HttpUrlConnectionTransport(),
+                            contextProvider = deviceContext::snapshot,
+                            sdkVersion = SDK_VERSION,
+                            bundleId = app.packageName,
+                            contentCards = _contentCards,
+                        ).also {
+                            it.display = ::display
+                            it.dismissDisplay = ::dismissDisplay
+                            it.delegate = { inAppMessageDelegate }
+                        }
                     }
+                } finally {
+                    pending.start { block -> newScope.launch { runCall(block) } }
                 }
-                pending.start { block -> newScope.launch { runCall(block) } }
                 (app as? Application)?.registerActivityLifecycleCallbacks(lifecycle)
             }
         }
@@ -214,12 +219,10 @@ object Herald {
             if (Build.VERSION.SDK_INT < 33 ||
                 activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
             ) {
-                val manager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
-                val enabled = manager?.areNotificationsEnabled() ?: true
-                return@guard submit { it.recordPushAuthorization(enabled) }
+                return@guard submit { it.recordPushAuthorization(notificationsEnabled(activity)) }
             }
             // The prompt pauses this activity; its answer is read on the next resume (see lifecycle).
-            awaitingPushPermission = true
+            pushPermission.requested()
             activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), PUSH_PERMISSION_REQUEST_CODE)
         }
     }
@@ -327,6 +330,12 @@ object Herald {
         }
     }
 
+    /** One check for both permission paths: false also when the user blocked notifications in settings. */
+    private fun notificationsEnabled(context: Context): Boolean {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+        return manager?.areNotificationsEnabled() ?: true
+    }
+
     private inline fun guard(name: String, block: () -> Unit) {
         try {
             block()
@@ -407,15 +416,15 @@ object Herald {
 
         override fun onActivityResumed(activity: Activity) {
             currentActivity = WeakReference(activity)
-            if (awaitingPushPermission && Build.VERSION.SDK_INT >= 33) {
-                awaitingPushPermission = false
-                val granted = activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-                submit { it.recordPushAuthorization(granted) }
+            if (pushPermission.onResumed()) {
+                val enabled = notificationsEnabled(activity)
+                submit { it.recordPushAuthorization(enabled) }
             }
             submit { it.retryUndelivered() }
         }
 
         override fun onActivityPaused(activity: Activity) {
+            pushPermission.onPaused()
             if (currentActivity?.get() === activity) currentActivity = null
         }
 

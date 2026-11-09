@@ -90,6 +90,7 @@ internal class HeraldCore(
 
     fun onBackground() {
         foreground = false
+        if (!state.enabled) return
         state.lastActivity = clock()
         state.save()
         flush()
@@ -135,23 +136,25 @@ internal class HeraldCore(
     // region identity
 
     fun identify(userId: String, traits: Map<String, Any?>) {
+        if (!state.enabled) return
         if (userId.isBlank()) return reject("identify", "userId must not be blank")
         Validation.length("userId", userId, 1, Validation.MAX_USER_ID)?.let { return reject("identify", it) }
         Validation.attributes("traits", traits)?.let { return reject("identify", it) }
         val traitsJson = jsonOrNull(traits, "identify traits") ?: return
-        val changed = state.userId != userId
-        if (changed && state.userId != null) clearUserState()
+        val previous = state.userId
+        val changed = previous != userId
+        if (changed && previous != null) clearUserState()
         state.userId = userId
         state.save()
         enqueue("identify") { put("userId", userId).put("traits", traitsJson) }
-        if (changed) {
-            state.pushToken?.let(::enqueuePushToken)
-            syncMessages()
-        }
+        if (changed) state.pushToken?.let(::enqueuePushToken)
+        // Same session, now identified: fetch this user's messages. A switch starts a session, which syncs.
+        if (previous == null) syncMessages()
     }
 
     /** Binds [token] to the current user. Call it after [identify]: identifying a different user clears it. */
     fun setUserToken(token: String?) {
+        if (!state.enabled) return
         state.userToken = token
         state.save()
         // Events this user queued before the token arrived would otherwise be sent without it.
@@ -196,7 +199,9 @@ internal class HeraldCore(
     fun setEnabled(enabled: Boolean) {
         state.enabled = enabled
         state.save()
-        if (enabled) ensureDeviceId()
+        if (!enabled) return
+        ensureDeviceId()
+        if (foreground) onForeground() // start the session now, as iOS does
     }
 
     /** A disabled SDK after [wipeData] keeps no device id on disk; a new one is made when it is enabled again. */
@@ -292,9 +297,9 @@ internal class HeraldCore(
     fun setPushToken(token: String) {
         if (token.isBlank()) return reject("setPushToken", "token must not be blank")
         Validation.length("token", token, 1, Validation.MAX_PUSH_TOKEN)?.let { return reject("setPushToken", it) }
+        if (!state.enabled) return
         state.pushToken = token
         state.save()
-        if (!state.enabled) return
         enqueuePushToken(token)
         val deferred = SubscriptionState.entries.firstOrNull { it.wire == state.deferredPushSubscription } ?: return
         setSubscription(SubscriptionChannel.PUSH, deferred)
@@ -644,6 +649,7 @@ internal class HeraldCore(
 
     /** [buttonId] is the notification action the user tapped; it logs a `button` interaction after the open. */
     fun onPushOpened(messageId: String, decisionId: String?, buttonId: String? = null) {
+        if (!state.enabled) return
         // The system redelivers the original intent extras after recreation; count each decision's open once.
         // Without a decisionId there is no per-send key (a messageId can repeat across sends), so no dedupe.
         if (decisionId != null) {

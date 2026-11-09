@@ -234,20 +234,34 @@ class HeraldCoreTest {
         assertNull(core.userId)
         assertFalse(core.enabled)
         // Nothing is collected or stored while disabled, even across a restart.
+        core.onForeground()
         core.track("after_wipe", emptyMap())
+        core.setPushToken("fcm_tok_2") // HeraldMessagingService syncs the token on every launch
+        core.identify("u_2", emptyMap())
+        core.setUserToken("tok_2")
+        core.setAttributes(mapOf("plan" to "pro"))
+        core.onPushOpened("msg_1", "dec_1")
+        core.reset()
+        core.onBackground()
+        core.flush()
         assertEquals(0, core.queue.size)
+        assertNull(core.userId)
         assertFalse(java.io.File(h.dir, "herald_state.json").exists())
+        assertFalse(java.io.File(h.dir, "herald_queue.json").exists())
         val restarted = h.newCore()
         assertFalse(restarted.enabled)
         assertFalse(java.io.File(h.dir, "herald_state.json").exists())
 
         restarted.setEnabled(true)
         assertNotEquals(oldDevice, restarted.deviceId)
-        assertEquals(restarted.deviceId, h.newCore().deviceId)
+        val reloaded = h.newCore()
+        assertEquals(restarted.deviceId, reloaded.deviceId)
+        assertNull(reloaded.userId) // nothing from the disabled period carried over
         restarted.track("back", emptyMap())
         val events = restarted.queue.peekBatch(100)
         assertEquals(listOf("session_start", "track"), events.map { it.event.getString("type") })
         assertTrue(events.all { it.userId == null })
+        assertFalse(events.any { it.event.getString("type") == "push_token" })
     }
 
     @Test

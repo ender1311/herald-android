@@ -41,6 +41,8 @@ internal class StateStore(private val file: File) {
     }
 
     fun save() {
+        // No device id means wiped and disabled: nothing may be written until setEnabled(true) makes a new one.
+        if (deviceId == null) return
         val json = JSONObject()
             .putOpt("deviceId", deviceId)
             .putOpt("userId", userId)

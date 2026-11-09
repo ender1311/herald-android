@@ -1,6 +1,7 @@
 package com.herald.sdk
 
 import com.herald.sdk.internal.PendingCalls
+import com.herald.sdk.internal.PushPermissionRequest
 import com.herald.sdk.internal.QueuedEvent
 import com.herald.sdk.internal.Validation
 import org.junit.Assert.assertEquals
@@ -150,6 +151,29 @@ class ParityTest {
         assertEquals("opted_in", events.last().getString("state"))
     }
 
+    @Test
+    fun pushPermissionIsReadOnlyAfterThePromptPausedTheActivity() {
+        val request = PushPermissionRequest()
+        assertFalse(request.onResumed()) // nothing requested
+        request.requested() // from onCreate/onStart: the activity's own first resume comes while the prompt is up
+        assertFalse(request.onResumed())
+        request.onPaused() // prompt shown
+        assertTrue(request.onResumed()) // prompt closed: read the answer
+        assertFalse(request.onResumed()) // once
+        request.onPaused()
+        assertFalse(request.onResumed())
+    }
+
+    @Test
+    fun pushPermissionWithNoPromptIsReadOnTheNextPauseAndResume() {
+        // Permanently denied: requestPermissions shows nothing; the next pause/resume cycle reads the answer.
+        val request = PushPermissionRequest()
+        request.requested()
+        assertFalse(request.onResumed())
+        request.onPaused()
+        assertTrue(request.onResumed())
+    }
+
     // 5. $email / $phone checked like the server
 
     @Test
@@ -182,6 +206,27 @@ class ParityTest {
     fun identifyWithAnInvalidEmailTraitIsRejected() {
         core.identify("u_1", mapOf("\$email" to "nope"))
         assertTrue(queued().isEmpty())
+    }
+
+    // Review round
+
+    @Test
+    fun userSwitchSyncsOnceAndAnonymousToIdentifiedSyncsOnce() {
+        core.onForeground() // anonymous session: one sync
+        val before = h.transport.gets.size
+        core.identify("u_1", emptyMap()) // same session: one sync for the user
+        assertEquals(before + 1, h.transport.gets.size)
+        core.identify("u_2", emptyMap()) // new session: its own sync only
+        assertEquals(before + 2, h.transport.gets.size)
+        assertTrue(h.transport.gets.last().url.contains("userId=u_2"))
+    }
+
+    @Test
+    fun reEnablingInTheForegroundStartsTheSessionAtOnce() {
+        core.onForeground()
+        core.wipeData()
+        core.setEnabled(true)
+        assertEquals(listOf("session_start"), queued().types())
     }
 
     // Other gaps from the docs pass
