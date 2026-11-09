@@ -8,7 +8,9 @@ import com.herald.sdk.InAppMessageDelegate
 import com.herald.sdk.SubscriptionChannel
 import com.herald.sdk.SubscriptionState
 import com.herald.sdk.TriggerType
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -33,6 +35,8 @@ internal class HeraldCore(
     private val clock: () -> Long = System::currentTimeMillis,
     private val random: Random = Random.Default,
     private val newId: () -> String = { UUID.randomUUID().toString() },
+    /** Where the in-app delegate is called (the main thread in the app); null calls it inline. */
+    private val mainDispatcher: CoroutineDispatcher? = null,
 ) {
     private val endpoint = endpoint.trimEnd('/')
     private val state = StateStore(File(dir, "herald_state.json"))
@@ -357,6 +361,12 @@ internal class HeraldCore(
                 batch = batch.take(batch.size / 2)
                 body = encodeBatch(batch, dropped)
             }
+            if (body.toByteArray().size > MAX_BATCH_BYTES) {
+                // One event too large to ever send: drop it rather than block the queue (no 413 round trip).
+                HeraldLog.warn("Dropping an event larger than ${MAX_BATCH_BYTES / 1024} KB")
+                queue.removeFirst(1, 0)
+                continue
+            }
             val batchUser = batch.first().userId
             val token = if (batchUser != null && batchUser == state.userId) {
                 state.userToken ?: batch.lastOrNull { it.userToken != null }?.userToken
@@ -551,7 +561,9 @@ internal class HeraldCore(
             return false
         }
         val decision = try {
-            delegate()?.shouldDisplay(message) ?: InAppDisplayDecision.DISPLAY
+            val ask = { delegate()?.shouldDisplay(message) ?: InAppDisplayDecision.DISPLAY }
+            // Blocks the SDK thread while the main thread answers, as the delegate is MainActor on iOS.
+            if (mainDispatcher == null) ask() else runBlocking(mainDispatcher) { ask() }
         } catch (e: Exception) {
             HeraldLog.error("InAppMessageDelegate threw; displaying", e)
             InAppDisplayDecision.DISPLAY

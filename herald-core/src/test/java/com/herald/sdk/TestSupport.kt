@@ -59,7 +59,7 @@ internal class CoreHarness(
 ) {
     val cards = MutableStateFlow<List<ContentCard>>(emptyList())
 
-    fun newCore(context: DeviceContext = fixtureContext) = HeraldCore(
+    fun newCore(context: DeviceContext = fixtureContext, mainDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null) = HeraldCore(
         dir = dir,
         appKey = "pk_test",
         endpoint = "https://herald.test/",
@@ -72,5 +72,6 @@ internal class CoreHarness(
         clock = { clock.now },
         random = Random(42),
         newId = { ids.next() },
+        mainDispatcher = mainDispatcher,
     )
 }

@@ -39,6 +39,14 @@ class HeraldCoreTest {
     }
 
     @Test
+    fun dropsASingleOversizeEventLocallyWithoutSending() {
+        core.track("big", mapOf("blob" to "x".repeat(520 * 1024)))
+        core.flush()
+        assertTrue(h.transport.requests.none { "big" in (it.body ?: "") })
+        assertEquals(0, core.queue.size)
+    }
+
+    @Test
     fun retries429WithRetryAfterAndKeepsEvents() {
         h.transport.batchResponse = status(429, mapOf("Retry-After" to "30"))
         core.track("a", emptyMap())

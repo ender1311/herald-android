@@ -23,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,7 +40,8 @@ import java.util.concurrent.Executors
 object Herald {
     const val SDK_VERSION: String = BuildConfig.SDK_VERSION
 
-    /** Request code used by [requestPushAuthorization]; match it in `onRequestPermissionsResult`. */
+    /** Request code used by [requestPushAuthorization]. */
+    @Deprecated("The SDK reads the permission answer on resume; apps no longer forward results. Will be removed.")
     const val PUSH_PERMISSION_REQUEST_CODE: Int = 0x4E58
 
     private val _contentCards = MutableStateFlow<List<ContentCard>>(emptyList())
@@ -54,6 +56,10 @@ object Herald {
     /** Draws in-app messages. herald-ui installs its default; set your own to replace it. */
     @Volatile
     var inAppMessagePresenter: InAppMessagePresenter? = null
+        set(value) {
+            field = value
+            if (value != null) submit { it.showPendingIfPossible() } // re-offer pending messages, as on iOS
+        }
 
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     @Volatile
@@ -117,6 +123,7 @@ object Herald {
                             sdkVersion = SDK_VERSION,
                             bundleId = app.packageName,
                             contentCards = _contentCards,
+                            mainDispatcher = Dispatchers.Main.immediate,
                         ).also {
                             it.display = ::display
                             it.dismissDisplay = ::dismissDisplay

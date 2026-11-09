@@ -1,6 +1,7 @@
 package com.herald.sdk
 
 import com.herald.sdk.internal.TriggerEvent
+import kotlinx.coroutines.asCoroutineDispatcher
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -266,5 +267,30 @@ class InAppDisplayTest {
         assertEquals("b_start", push[1].getString("buttonId"))
         assertTrue(push.all { it.getString("decisionId") == "dec_7" && it.getString("messageId") == "dec_7" })
         assertFalse(push[0].has("buttonId"))
+    }
+
+    @Test
+    fun delegateIsAskedOnTheMainDispatcherThread() {
+        val main = java.util.concurrent.Executors.newSingleThreadExecutor { Thread(it, "fake-main") }
+        val c = CoreHarness().newCore(mainDispatcher = main.asCoroutineDispatcher())
+        c.display = { c.presentAccepted(it); true }
+        var askedOn: String? = null
+        c.delegate = { InAppMessageDelegate { askedOn = Thread.currentThread().name; InAppDisplayDecision.DISPLAY } }
+        c.identify("u_1", emptyMap())
+        c.onForeground()
+        assertTrue(askedOn.orEmpty().startsWith("fake-main"))
+        main.shutdown()
+    }
+
+    @Test
+    fun settingAPresenterOffersPendingMessages() {
+        val c = CoreHarness().newCore()
+        c.identify("u_1", emptyMap())
+        c.onForeground() // no presenter yet: the message stays pending
+        assertTrue(c.pendingIds.isNotEmpty())
+        val offered = mutableListOf<InAppMessage>()
+        c.display = { offered += it; c.presentAccepted(it); true }
+        c.showPendingIfPossible() // what the Herald.inAppMessagePresenter setter submits
+        assertEquals(1, offered.size)
     }
 }
