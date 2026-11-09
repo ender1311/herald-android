@@ -30,6 +30,21 @@ class BatchEncodingTest {
     }
 
     @Test
+    fun contextStringsAreClippedToServerLimits() {
+        val ctx = fixtureContext.copy(
+            appVersion = "1.2.3-ci-" + "x".repeat(100),
+            model = "m".repeat(200),
+            locale = "en-US-u-" + "ca".repeat(50),
+            osName = "",
+        ).toJson(DeviceDataCollection.STANDARD)
+        assertEquals("1.2.3-ci-" + "x".repeat(55), ctx.getJSONObject("app").getString("version"))
+        assertEquals(128, ctx.getJSONObject("device").getString("model").length)
+        assertEquals(64, ctx.getString("locale").length)
+        assertEquals("unknown", ctx.getJSONObject("os").getString("name"))
+        assertEquals(fixtureContext.appName, ctx.getJSONObject("app").getString("name"))
+    }
+
+    @Test
     fun fullBatchMatchesFixtureStructure() {
         val ids = (listOf("6c1f2a9e-3b4d-4e5f-8a7b-9c0d1e2f3a4b") +
             (1..20).map { "0b8f3c2e-0000-4000-8000-0000000000%02d".format(it) }).iterator()
