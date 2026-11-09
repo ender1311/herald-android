@@ -156,11 +156,16 @@ internal class HeraldCore(
     /** Binds [token] to the current user. Call it after [identify]: identifying a different user clears it. */
     fun setUserToken(token: String?) {
         if (!state.enabled) return
+        val changed = state.userToken != token
         state.userToken = token
         state.save()
         // Events this user queued before the token arrived would otherwise be sent without it.
         val uid = state.userId
-        if (token != null && uid != null) queue.assignToken(uid, token)
+        if (token != null && uid != null) {
+            queue.assignToken(uid, token)
+            // identify() already synced without the token, which a server requiring verification refuses.
+            if (changed) syncMessages()
+        }
     }
 
     /** Back to an anonymous user on the same device, with a new session; the push token is sent again. */

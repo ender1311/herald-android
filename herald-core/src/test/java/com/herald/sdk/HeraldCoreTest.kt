@@ -168,6 +168,17 @@ class HeraldCoreTest {
     }
 
     @Test
+    fun setUserTokenAfterIdentifySyncsWithTheToken() {
+        core.identify("u_1", emptyMap())
+        assertNull(h.transport.gets.last().headers["x-herald-user-token"])
+        core.setUserToken("tok_1")
+        assertEquals("tok_1", h.transport.gets.last().headers["x-herald-user-token"])
+        val gets = h.transport.gets.size
+        core.setUserToken("tok_1") // unchanged: no extra request
+        assertEquals(gets, h.transport.gets.size)
+    }
+
+    @Test
     fun anonymousUsersSyncWithoutUserId() {
         core.syncMessages()
         val get = h.transport.gets.single()
