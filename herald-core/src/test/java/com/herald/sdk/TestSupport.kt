@@ -29,7 +29,11 @@ internal val fixtureContext = DeviceContext(
 internal class FakeTransport : Transport {
     val requests = mutableListOf<HttpRequest>()
     var batchResponse: () -> HttpResponse = { HttpResponse(200, emptyMap(), """{"data":{"accepted":1,"duplicates":0}}""") }
-    var messagesResponse: (HttpRequest) -> HttpResponse = { HttpResponse(200, mapOf("ETag" to "\"v1\""), fixture("messages.json")) }
+    /** Like the server: an anonymous request (no userId) gets empty lists. */
+    var messagesResponse: (HttpRequest) -> HttpResponse = { request ->
+        if ("userId=" in request.url) HttpResponse(200, mapOf("ETag" to "\"v1\""), fixture("messages.json"))
+        else HttpResponse(200, emptyMap(), fixture("messages-empty.json"))
+    }
 
     val batches: List<JSONObject> get() = requests.filter { it.method == "POST" }.map { JSONObject(it.body!!) }
     val gets: List<HttpRequest> get() = requests.filter { it.method == "GET" }

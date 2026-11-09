@@ -22,6 +22,8 @@ internal class StateStore(private val file: File) {
             }
         }
     var pushToken: String? = null
+    /** A push opt-in made before any token existed; sent once the token arrives. Wire value. */
+    var deferredPushSubscription: String? = null
     var sessionId: String? = null
     var sessionStart: Long = 0
     var lastActivity: Long = 0
@@ -44,6 +46,7 @@ internal class StateStore(private val file: File) {
             .putOpt("userId", userId)
             .putOpt("userToken", userToken)
             .putOpt("pushToken", pushToken)
+            .putOpt("deferredPushSubscription", deferredPushSubscription)
             .putOpt("sessionId", sessionId)
             .put("sessionStart", sessionStart)
             .put("lastActivity", lastActivity)
@@ -72,6 +75,7 @@ internal class StateStore(private val file: File) {
             userId = json.str("userId")
             userToken = json.str("userToken")
             pushToken = json.str("pushToken")
+            deferredPushSubscription = json.str("deferredPushSubscription")
             sessionId = json.str("sessionId")
             sessionStart = json.num("sessionStart")?.toLong() ?: 0
             lastActivity = json.num("lastActivity")?.toLong() ?: 0

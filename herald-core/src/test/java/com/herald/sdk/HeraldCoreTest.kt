@@ -21,7 +21,7 @@ class HeraldCoreTest {
         core.track("a", emptyMap())
         core.flush()
         assertEquals(0, core.queue.size)
-        val req = h.transport.requests.single()
+        val req = h.transport.requests.single { it.method == "POST" }
         assertEquals("https://herald.test/api/v1/sdk/batch", req.url)
         assertEquals("pk_test", req.headers["x-herald-app-key"])
         assertFalse(req.headers.containsKey("x-herald-user-token"))
@@ -66,12 +66,12 @@ class HeraldCoreTest {
         core.track("a", emptyMap())
         core.flush()
         val first = core.nextAttemptAt - h.clock.now
-        assertTrue(first in 1_000..2_000)
+        assertTrue(first in 500..1_000)
         h.clock.advance(first)
         h.transport.batchResponse = { throw IOException("offline") }
         core.flush()
         val second = core.nextAttemptAt - h.clock.now
-        assertTrue(second in 2_000..4_000)
+        assertTrue(second in 1_000..2_000)
         assertEquals(2, core.queue.size)
     }
 
@@ -168,9 +168,11 @@ class HeraldCoreTest {
     }
 
     @Test
-    fun anonymousUsersDoNotSync() {
+    fun anonymousUsersSyncWithoutUserId() {
         core.syncMessages()
-        assertTrue(h.transport.gets.isEmpty())
+        val get = h.transport.gets.single()
+        assertEquals("https://herald.test/api/v1/sdk/messages?deviceId=${core.deviceId}", get.url)
+        assertNull(get.headers["x-herald-user-token"])
     }
 
     @Test
@@ -257,7 +259,8 @@ class HeraldCoreTest {
         core.flush()
         val events = h.transport.batches.single().getJSONArray("events")
         val types = (0 until events.length()).map { events.getJSONObject(it).let { e -> e.getString("type") + ":" + e.optString("channel") } }
-        assertEquals(listOf("session_start:", "subscription:email", "push_token:", "subscription:push", "track:"), types)
+        // The push opt-in waits for the token (as on iOS); the email one does not.
+        assertEquals(listOf("session_start:", "subscription:email", "track:", "push_token:", "subscription:push"), types)
     }
 
     @Test

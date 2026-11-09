@@ -59,6 +59,7 @@ internal class HeraldCore(
     private var sessionTriggerDue = false
     private var pushOpenTriggerDue = false
     private var failures = 0
+    private var activityPersistedAt = 0L
     var nextAttemptAt = 0L
         private set
 
@@ -96,15 +97,25 @@ internal class HeraldCore(
         flush()
     }
 
+    /**
+     * Continues the current session or, after `sessionTimeoutMinutes` without activity (any recorded call or
+     * foreground, in the foreground or background), ends it and starts a new one. Same rule as iOS.
+     */
     private fun ensureSession(now: Long) {
         if (!state.enabled) return
-        val expired = state.sessionId == null ||
-            (!foreground && now - state.lastActivity > options.sessionTimeoutMinutes * 60_000)
-        if (!expired) return
         if (state.sessionId != null) {
-            val duration = (state.lastActivity - state.sessionStart).coerceAtLeast(0) / 1000
-            enqueueRaw("session_end", now) { put("durationSeconds", duration) }
+            if (now - state.lastActivity < options.sessionTimeoutMinutes * 60_000) {
+                state.lastActivity = now
+                // Activity is persisted at most once a minute (and on background), as on iOS.
+                if (now - activityPersistedAt >= 60_000) {
+                    activityPersistedAt = now
+                    state.save()
+                }
+                return
+            }
+            enqueueSessionEnd()
         }
+        activityPersistedAt = now
         state.sessionId = now.toString()
         state.sessionStart = now
         state.lastActivity = now
@@ -113,6 +124,12 @@ internal class HeraldCore(
         enqueueRaw("session_start", now) {}
         syncMessages()
         if (foreground) trigger(TriggerEvent(TriggerType.SESSION_START)) else sessionTriggerDue = true
+    }
+
+    /** Queues session_end for the current session, stamped at its last activity. */
+    private fun enqueueSessionEnd() {
+        val duration = (state.lastActivity - state.sessionStart).coerceAtLeast(0) / 1000
+        enqueueRaw("session_end", state.lastActivity) { put("durationSeconds", duration) }
     }
 
     // endregion
@@ -144,12 +161,23 @@ internal class HeraldCore(
         if (token != null && uid != null) queue.assignToken(uid, token)
     }
 
+    /** Back to an anonymous user on the same device, with a new session; the push token is sent again. */
     fun reset() {
         clearUserState()
         state.save()
+        if (!state.enabled) return
+        ensureSession(clock())
+        state.pushToken?.let(::enqueuePushToken)
     }
 
+    /** Ends the session (so the next event starts a new one) and forgets the current user. */
     private fun clearUserState() {
+        if (state.sessionId != null) {
+            // Queued before the user id is cleared, so it belongs to the user whose session it ends.
+            if (state.enabled) enqueueSessionEnd()
+            state.sessionId = null
+        }
+        state.deferredPushSubscription = null
         state.userId = null
         state.userToken = null
         state.etag = null
@@ -173,6 +201,7 @@ internal class HeraldCore(
     }
 
     fun wipeData() {
+        state.sessionId = null // no session_end: everything is being deleted
         queue.clear()
         clearUserState()
         state.delete()
@@ -209,25 +238,45 @@ internal class HeraldCore(
 
     fun trackPurchase(productId: String, price: Double, currency: String, quantity: Int, properties: Map<String, Any?>) {
         Validation.length("productId", productId, 1, Validation.MAX_NAME)?.let { return reject("trackPurchase", it) }
-        if (currency.length != 3) return reject("trackPurchase", "currency must be a 3-letter ISO 4217 code")
+        val code = currency.uppercase(java.util.Locale.ROOT)
+        if (code.length != 3) return reject("trackPurchase", "currency must be a 3-letter ISO 4217 code")
         if (quantity < 1) return reject("trackPurchase", "quantity must be at least 1")
         if (!price.isFinite()) return reject("trackPurchase", "price is not finite")
         Validation.properties("properties", properties)?.let { return reject("trackPurchase", it) }
         val props = jsonOrNull(properties, "purchase properties") ?: return
         enqueue("purchase") {
-            put("productId", productId).put("price", price).put("currency", currency)
+            put("productId", productId).put("price", price).put("currency", code)
                 .put("quantity", quantity).put("properties", props)
         }
     }
 
-    fun setAttributes(attributes: Map<String, Any?>) {
+    fun setAttributes(input: Map<String, Any?>) {
+        if (!state.enabled) return
+        val attributes = Validation.droppingInvalidContacts(input)
         if (attributes.isEmpty()) return
         Validation.attributes("attribute", attributes)?.let { return reject("setAttributes", it) }
         val json = jsonOrNull(attributes, "attributes") ?: return
         enqueue("attributes") { put("attributes", json) }
     }
 
+    /**
+     * A push opt-in made before any push token exists waits for the token, so the server sees the device's
+     * push_token first. An opt-out is sent at once (a denied permission never yields a token) and cancels
+     * any deferred opt-in. Same rule as iOS.
+     */
     fun setSubscription(channel: SubscriptionChannel, subscriptionState: SubscriptionState) {
+        if (!state.enabled) return
+        if (channel == SubscriptionChannel.PUSH) {
+            if (subscriptionState != SubscriptionState.UNSUBSCRIBED && state.pushToken == null) {
+                state.deferredPushSubscription = subscriptionState.wire
+                state.save()
+                return
+            }
+            if (state.deferredPushSubscription != null) {
+                state.deferredPushSubscription = null
+                state.save()
+            }
+        }
         enqueue("subscription") { put("channel", channel.wire).put("state", subscriptionState.wire) }
     }
 
@@ -236,8 +285,15 @@ internal class HeraldCore(
         Validation.length("token", token, 1, Validation.MAX_PUSH_TOKEN)?.let { return reject("setPushToken", it) }
         state.pushToken = token
         state.save()
+        if (!state.enabled) return
         enqueuePushToken(token)
+        val deferred = SubscriptionState.entries.firstOrNull { it.wire == state.deferredPushSubscription } ?: return
+        setSubscription(SubscriptionChannel.PUSH, deferred)
     }
+
+    /** Result of the notification permission prompt: opted_in when granted, unsubscribed when denied. */
+    fun recordPushAuthorization(granted: Boolean) =
+        setSubscription(SubscriptionChannel.PUSH, if (granted) SubscriptionState.OPTED_IN else SubscriptionState.UNSUBSCRIBED)
 
     private fun enqueuePushToken(token: String) {
         enqueue("push_token") { put("platform", "fcm").put("token", token).putOpt("bundleId", bundleId) }
@@ -314,7 +370,7 @@ internal class HeraldCore(
                 }
                 408, 429, in 500..599 -> {
                     HeraldLog.info("Batch send got ${response.status}; will retry")
-                    scheduleRetry(Backoff.retryAfterSeconds(response))
+                    scheduleRetry(Backoff.retryAfterSeconds(response, clock()))
                     return
                 }
                 else -> {
@@ -359,13 +415,14 @@ internal class HeraldCore(
 
     // region messages
 
+    /** Anonymous users sync too (as on iOS); the server returns empty lists for them. */
     fun syncMessages() {
-        val uid = state.userId ?: return
         if (!state.enabled) return
-        val url = "$endpoint/api/v1/sdk/messages?deviceId=${encode(deviceId)}&userId=${encode(uid)}"
+        val uid = state.userId
+        val url = "$endpoint/api/v1/sdk/messages?deviceId=${encode(deviceId)}" + (uid?.let { "&userId=${encode(it)}" } ?: "")
         val headers = buildMap {
             put("x-herald-app-key", appKey)
-            state.userToken?.let { put("x-herald-user-token", it) }
+            if (uid != null) state.userToken?.let { put("x-herald-user-token", it) }
             state.etag?.let { put("If-None-Match", it) }
         }
         val response = try {
@@ -602,7 +659,7 @@ internal class HeraldCore(
         const val SDK_NAME = "herald-android"
         const val QUEUE_CAP = 1000
         const val MAX_BATCH_EVENTS = 100
-        const val MAX_BATCH_BYTES = 500_000
+        const val MAX_BATCH_BYTES = 512 * 1024
         const val MAX_HELD = 20
         const val MAX_RECENT_OPENS = 50
     }

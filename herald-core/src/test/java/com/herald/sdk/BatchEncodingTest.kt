@@ -64,7 +64,8 @@ class BatchEncodingTest {
         val actual = batch.getJSONArray("events")
         assertEquals(11, actual.length()) // fixture's 10 plus the new session_start
         val actualTypes = (0 until actual.length()).map { actual.getJSONObject(it).getString("type") }
-        // Wire rule: push_token precedes the push subscription, even though the app called setSubscription first.
+        // push_token precedes the push subscription, even though the app called setSubscription first:
+        // the opt-in waits for the token (as on iOS), so it is also created after it.
         assertTrue(actualTypes.indexOf("push_token") < actualTypes.indexOf("subscription"))
         for (i in 0 until expected.length()) {
             val type = expected.getJSONObject(i).getString("type")
@@ -81,6 +82,8 @@ class BatchEncodingTest {
                 }
                 // Timestamp and duration depend on the clock; shape must match.
                 "session_end" -> assertEquals(e.keySet(), a.keySet())
+                // Created when the token arrived, so its generated id comes after the token's.
+                "subscription" -> assertTrue("expected $e\nactual   $a", e.apply { remove("id") }.similar(a.apply { remove("id") }))
                 else -> assertTrue("event $type\nexpected $e\nactual   $a", e.similar(a))
             }
         }

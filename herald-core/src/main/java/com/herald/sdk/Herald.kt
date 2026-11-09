@@ -15,6 +15,7 @@ import com.herald.sdk.internal.AndroidDeviceContext
 import com.herald.sdk.internal.HeraldCore
 import com.herald.sdk.internal.HeraldLog
 import com.herald.sdk.internal.HttpUrlConnectionTransport
+import com.herald.sdk.internal.PendingCalls
 import com.herald.sdk.push.HeraldPushPayload
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -60,6 +61,12 @@ object Herald {
     /** Read and written only on the SDK thread. */
     private var core: HeraldCore? = null
 
+    /** Calls made before [configure]; replayed in order once it runs. */
+    private val pending = PendingCalls<(HeraldCore) -> Unit>()
+
+    /** Main thread only: [requestPushAuthorization] showed the prompt; the result is read on the next resume. */
+    private var awaitingPushPermission = false
+
     @Volatile
     private var appContext: Context? = null
 
@@ -72,7 +79,8 @@ object Herald {
     private var currentActivity: WeakReference<Activity>? = null
 
     /**
-     * Starts the SDK. Call once, from `Application.onCreate`. Later calls are ignored.
+     * Starts the SDK. Call once, from `Application.onCreate`. Later calls are ignored. Calls made before it
+     * (up to 1,000) are kept and applied, in order, once it runs.
      * [endpoint] is your Herald base URL, for example `https://herald.example.com`.
      */
     @JvmStatic
@@ -109,6 +117,7 @@ object Herald {
                         it.delegate = { inAppMessageDelegate }
                     }
                 }
+                pending.start { block -> newScope.launch { runCall(block) } }
                 (app as? Application)?.registerActivityLifecycleCallbacks(lifecycle)
             }
         }
@@ -127,7 +136,10 @@ object Herald {
     @JvmStatic
     fun setUserToken(token: String?) = submit { it.setUserToken(token) }
 
-    /** Logs the user out: clears the user id, token, cards and in-app messages. Device id stays. */
+    /**
+     * Logs the user out: anonymous again on this device, with a new session. Clears the user id, token,
+     * cards and in-app messages and sends the push token again. Device id stays.
+     */
     @JvmStatic
     fun reset() = submit { it.reset() }
 
@@ -187,12 +199,24 @@ object Herald {
 
     // Push
 
-    /** Shows the Android 13+ notification permission prompt when it has not been granted. No-op below Android 13. */
+    /**
+     * Shows the Android 13+ notification permission prompt when it has not been granted, and records the push
+     * subscription: opted_in when allowed (sent once the FCM token exists), unsubscribed when denied (sent at
+     * once). Below Android 13, or when already granted, it records whether notifications are enabled.
+     * Call from the main thread.
+     */
     @JvmStatic
     fun requestPushAuthorization(activity: Activity) {
         guard("requestPushAuthorization") {
-            if (Build.VERSION.SDK_INT < 33) return@guard
-            if (activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return@guard
+            if (Build.VERSION.SDK_INT < 33 ||
+                activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            ) {
+                val manager = activity.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                val enabled = manager?.areNotificationsEnabled() ?: true
+                return@guard submit { it.recordPushAuthorization(enabled) }
+            }
+            // The prompt pauses this activity; its answer is read on the next resume (see lifecycle).
+            awaitingPushPermission = true
             activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), PUSH_PERMISSION_REQUEST_CODE)
         }
     }
@@ -288,13 +312,15 @@ object Herald {
     // Internals
 
     private fun submit(block: (HeraldCore) -> Unit) {
-        val s = scope ?: return HeraldLog.warn("Herald.configure has not been called; call ignored")
-        s.launch {
-            try {
-                core?.let(block)
-            } catch (e: Exception) {
-                HeraldLog.error("Herald call failed", e)
-            }
+        if (pending.offer(block)) return
+        scope?.launch { runCall(block) }
+    }
+
+    private fun runCall(block: (HeraldCore) -> Unit) {
+        try {
+            core?.let(block)
+        } catch (e: Exception) {
+            HeraldLog.error("Herald call failed", e)
         }
     }
 
@@ -378,6 +404,11 @@ object Herald {
 
         override fun onActivityResumed(activity: Activity) {
             currentActivity = WeakReference(activity)
+            if (awaitingPushPermission && Build.VERSION.SDK_INT >= 33) {
+                awaitingPushPermission = false
+                val granted = activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+                submit { it.recordPushAuthorization(granted) }
+            }
             submit { it.retryUndelivered() }
         }
 

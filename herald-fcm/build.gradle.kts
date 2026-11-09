@@ -27,7 +27,7 @@ kotlin {
 
 dependencies {
     api(project(":herald-core"))
-    implementation("com.google.firebase:firebase-messaging:24.0.3")
+    api("com.google.firebase:firebase-messaging:24.0.3")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

@@ -1,9 +1,6 @@
 package com.herald.sample
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -31,8 +28,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.herald.sdk.Herald
-import com.herald.sdk.SubscriptionChannel
-import com.herald.sdk.SubscriptionState
 import com.herald.ui.ContentCardFeed
 
 class MainActivity : ComponentActivity() {
@@ -47,28 +42,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Prompts on Android 13+ when needed; otherwise notifications are already allowed, so opt in now. */
-    private fun enablePush() {
-        val needsPrompt = Build.VERSION.SDK_INT >= 33 &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
-        if (needsPrompt) {
-            Herald.requestPushAuthorization(this)
-        } else {
-            Herald.setSubscription(SubscriptionChannel.PUSH, SubscriptionState.OPTED_IN)
-        }
-    }
+    /** Prompts on Android 13+ when needed; Herald records the push subscription from the answer. */
+    private fun enablePush() = Herald.requestPushAuthorization(this)
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         Herald.handleNotificationIntent(intent)
-    }
-
-    @Deprecated("Herald.requestPushAuthorization uses the platform permission API")
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != Herald.PUSH_PERMISSION_REQUEST_CODE) return
-        val granted = grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED
-        Herald.setSubscription(SubscriptionChannel.PUSH, if (granted) SubscriptionState.OPTED_IN else SubscriptionState.UNSUBSCRIBED)
     }
 }
 
