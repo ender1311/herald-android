@@ -143,6 +143,34 @@ class InAppDisplayTest {
     }
 
     @Test
+    fun lateConfirmationAfterUserSwitchIsIgnored() {
+        core.display = { true } // handed to the main thread
+        core.track("workout_completed", mapOf("minutes" to 32))
+        val message = core.engine.onScreen!!
+        core.identify("u_2", emptyMap()) // switch lands before the presenter answers
+        core.presentAccepted(message)
+        core.presentFailed(message)
+        assertTrue(core.engine.lastShown.keys.none { it.endsWith("|msg_2") })
+        assertTrue(core.undeliveredIds.isEmpty())
+
+        core.identify("u_1", emptyMap())
+        h.clock.advance(60_000)
+        core.display = presenterAvailable
+        core.track("workout_completed", mapOf("minutes" to 32))
+        assertEquals("msg_2", shown.single().id) // u_1 never actually saw it
+    }
+
+    @Test
+    fun pushOpensWithoutDecisionIdAreNeverDeduped() {
+        core.onPushOpened("msg_weekly", null)
+        h.clock.advance(24 * 3_600_000L)
+        core.onPushOpened("msg_weekly", null)
+        val opens = interactions().filter { it.getString("kind") == "push" }
+        assertEquals(2, opens.size)
+        assertTrue(opens.all { it.getString("messageId") == "msg_weekly" && !it.has("decisionId") })
+    }
+
+    @Test
     fun pushOpenLogsOnceAndTriggers() {
         core.onPushOpened("dec_9", "dec_9")
         core.onPushOpened("dec_9", "dec_9") // redelivered intent

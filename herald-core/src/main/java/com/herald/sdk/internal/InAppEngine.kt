@@ -45,13 +45,17 @@ internal class InAppEngine(
     /** Reserves the screen while a presenter is asked to show [message]; blocks other messages. */
     fun beginPresenting(message: InAppMessage) {
         onScreen = message
+        // Captured now: a user switch before the presenter confirms must not write into the new user's history.
+        presentingUserKey = userKey()
     }
+
+    private var presentingUserKey: String? = null
 
     /** The presenter confirmed the message is visible: spend re-eligibility and start the interval. */
     fun recordShown(message: InAppMessage) {
         val now = clock()
         lastDisplayAt = now
-        lastShown[historyKey(message.id)] = now
+        lastShown["${presentingUserKey ?: userKey()}|${message.id}"] = now
     }
 
     fun markDismissed() {

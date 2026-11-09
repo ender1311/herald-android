@@ -507,6 +507,8 @@ internal class HeraldCore(
 
     /** The presenter showed the message: only now is it marked shown and the interval started. */
     fun presentAccepted(message: InAppMessage) {
+        // Stale confirmation (reset or user switch since the hand-off): ignore.
+        if (engine.onScreen?.id != message.id) return
         engine.recordShown(message)
         state.undeliveredIds.remove(message.id)
         state.save()
@@ -514,7 +516,8 @@ internal class HeraldCore(
 
     /** Nothing could draw the message: free the screen and keep it for the next activity resume. */
     fun presentFailed(message: InAppMessage) {
-        if (engine.onScreen?.id == message.id) engine.markDismissed()
+        if (engine.onScreen?.id != message.id) return
+        engine.markDismissed()
         if (message.id !in state.undeliveredIds) {
             state.undeliveredIds.add(message.id)
             state.save()
@@ -552,12 +555,14 @@ internal class HeraldCore(
     // region push
 
     fun onPushOpened(messageId: String, decisionId: String?) {
-        // The system redelivers the original intent extras after recreation; count each open once.
-        val key = decisionId ?: messageId
-        if (key in state.recentPushOpens) return
-        state.recentPushOpens.add(key)
-        while (state.recentPushOpens.size > MAX_RECENT_OPENS) state.recentPushOpens.removeAt(0)
-        state.save()
+        // The system redelivers the original intent extras after recreation; count each decision's open once.
+        // Without a decisionId there is no per-send key (a messageId can repeat across sends), so no dedupe.
+        if (decisionId != null) {
+            if (decisionId in state.recentPushOpens) return
+            state.recentPushOpens.add(decisionId)
+            while (state.recentPushOpens.size > MAX_RECENT_OPENS) state.recentPushOpens.removeAt(0)
+            state.save()
+        }
         logInteraction(messageId, "push", "open", decisionId)
         if (foreground) trigger(TriggerEvent(TriggerType.PUSH_OPEN)) else pushOpenTriggerDue = true
     }
