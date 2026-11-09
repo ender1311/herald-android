@@ -47,16 +47,23 @@ object Herald {
 
     /** Decides whether a triggered in-app message shows now, later or never. */
     @Volatile
-    var inAppMessageListener: InAppMessageListener? = null
+    var inAppMessageDelegate: InAppMessageDelegate? = null
 
     /** Draws in-app messages. herald-ui installs its default; set your own to replace it. */
     @Volatile
     var inAppMessagePresenter: InAppMessagePresenter? = null
 
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+    @Volatile
     private var scope: CoroutineScope? = null
+
+    /** Read and written only on the SDK thread. */
     private var core: HeraldCore? = null
+
+    @Volatile
     private var appContext: Context? = null
+
+    @Volatile
     private var options = HeraldOptions()
     private var flushTicker: Job? = null
     private var startedActivities = 0
@@ -98,7 +105,8 @@ object Herald {
                         contentCards = _contentCards,
                     ).also {
                         it.display = ::display
-                        it.listener = { inAppMessageListener }
+                        it.dismissDisplay = ::dismissDisplay
+                        it.delegate = { inAppMessageDelegate }
                     }
                 }
                 (app as? Application)?.registerActivityLifecycleCallbacks(lifecycle)
@@ -112,7 +120,10 @@ object Herald {
     @JvmOverloads
     fun identify(userId: String, traits: Map<String, Any?> = emptyMap()) = submit { it.identify(userId, traits) }
 
-    /** Identity verification token for the identified user (hex HMAC-SHA256 of the user id, from your server). */
+    /**
+     * Identity verification token for the identified user (hex HMAC-SHA256 of the user id, from your server).
+     * Call it after [identify]: identifying a different user clears the token.
+     */
     @JvmStatic
     fun setUserToken(token: String?) = submit { it.setUserToken(token) }
 
@@ -205,7 +216,7 @@ object Herald {
             intent?.removeExtra(HeraldPushPayload.KEY_DECISION_ID)
             intent?.removeExtra(HeraldPushPayload.KEY_MESSAGE_ID)
             intent?.removeExtra(HeraldPushPayload.KEY_DEEPLINK)
-            val messageId = payload.messageId ?: payload.decisionId ?: ""
+            val messageId = payload.messageId ?: payload.decisionId ?: return false
             submit { it.onPushOpened(messageId, payload.decisionId) }
             payload.deeplink?.let(::openUrl)
             true
@@ -266,6 +277,9 @@ object Herald {
         }
     }
 
+    /** Main thread only: the activity and message currently presented, to free the screen if the activity dies. */
+    private var presented: Pair<WeakReference<Activity>, InAppMessage>? = null
+
     /** Called on the SDK thread. Returns false when no presenter or activity can take the message now. */
     private fun display(message: InAppMessage): Boolean {
         val presenter = inAppMessagePresenter ?: return false
@@ -278,15 +292,31 @@ object Herald {
                 HeraldLog.error("InAppMessagePresenter threw", e)
                 false
             }
-            if (!shown) submit { it.presentFailed(message) }
+            if (shown) {
+                presented = WeakReference<Activity>(activity!!) to message
+                submit { it.presentAccepted(message) }
+            } else {
+                submit { it.presentFailed(message) }
+            }
         }
         return true
+    }
+
+    private fun dismissDisplay() {
+        val presenter = inAppMessagePresenter ?: return
+        mainHandler.post {
+            presented = null
+            guard("dismissCurrent") { presenter.dismissCurrent() }
+        }
     }
 
     private class Callbacks(private val message: InAppMessage) : InAppMessageCallbacks {
         override fun onImpression() = submit { it.onInAppImpression(message) }
         override fun onClick(buttonId: String?) = submit { it.onInAppClick(message, buttonId) }
-        override fun onDismiss() = submit { it.onInAppDismiss(message) }
+        override fun onDismiss() {
+            mainHandler.post { if (presented?.second === message) presented = null }
+            submit { it.onInAppDismiss(message) }
+        }
     }
 
     private val lifecycle = object : Application.ActivityLifecycleCallbacks {
@@ -295,9 +325,14 @@ object Herald {
             if (startedActivities == 1) {
                 submit { it.onForeground() }
                 flushTicker = scope?.launch {
+                    val intervalMs = options.flushIntervalSeconds.coerceAtLeast(1) * 1000
                     while (isActive) {
-                        delay(options.flushIntervalSeconds * 1000)
-                        core?.flush()
+                        delay(intervalMs)
+                        try {
+                            core?.flush()
+                        } catch (e: Exception) {
+                            HeraldLog.error("Periodic flush failed", e)
+                        }
                     }
                 }
             }
@@ -314,6 +349,7 @@ object Herald {
 
         override fun onActivityResumed(activity: Activity) {
             currentActivity = WeakReference(activity)
+            submit { it.retryUndelivered() }
         }
 
         override fun onActivityPaused(activity: Activity) {
@@ -322,6 +358,12 @@ object Herald {
 
         override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
         override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
-        override fun onActivityDestroyed(activity: Activity) = Unit
+        override fun onActivityDestroyed(activity: Activity) {
+            val (ref, message) = presented ?: return
+            if (ref.get() === activity || ref.get() == null) {
+                presented = null
+                submit { it.presenterGone(message) }
+            }
+        }
     }
 }

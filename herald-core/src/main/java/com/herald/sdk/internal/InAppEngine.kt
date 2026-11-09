@@ -20,8 +20,10 @@ internal data class TriggerEvent(
 internal class InAppEngine(
     private val clock: () -> Long,
     private val minIntervalMs: Long,
-    /** messageId -> epoch ms last displayed; persisted by the owner. */
+    /** "userKey|messageId" -> epoch ms last displayed; persisted by the owner, cleared only by wipeData. */
     val lastShown: MutableMap<String, Long> = mutableMapOf(),
+    /** The current user id, or "anonymous". Display history is per user. */
+    private val userKey: () -> String = { ANONYMOUS },
 ) {
     var messages: List<InAppMessage> = emptyList()
     var onScreen: InAppMessage? = null
@@ -31,28 +33,40 @@ internal class InAppEngine(
     fun evaluate(trigger: TriggerEvent): InAppMessage? {
         if (onScreen != null) return null
         val now = clock()
-        lastDisplayAt?.let { if (now - it < minIntervalMs) return null }
+        if (!intervalElapsed()) return null
         return messages
             .filter { matches(it, trigger) && isLive(it, now) && isEligible(it, now) }
             .maxByOrNull { it.priority }
     }
 
-    fun markDisplayed(message: InAppMessage) {
-        val now = clock()
+    /** Whether the min interval since the last confirmed display has passed. */
+    fun intervalElapsed(): Boolean = lastDisplayAt?.let { clock() - it >= minIntervalMs } ?: true
+
+    /** Reserves the screen while a presenter is asked to show [message]; blocks other messages. */
+    fun beginPresenting(message: InAppMessage) {
         onScreen = message
+    }
+
+    /** The presenter confirmed the message is visible: spend re-eligibility and start the interval. */
+    fun recordShown(message: InAppMessage) {
+        val now = clock()
         lastDisplayAt = now
-        lastShown[message.id] = now
+        lastShown[historyKey(message.id)] = now
     }
 
     fun markDismissed() {
         onScreen = null
     }
 
+    fun isEligible(message: InAppMessage): Boolean = isEligible(message, clock())
+
+    private fun historyKey(messageId: String) = "${userKey()}|$messageId"
+
     fun isLive(message: InAppMessage, now: Long = clock()): Boolean =
         message.expiresAt == null || message.expiresAt > now
 
     private fun isEligible(message: InAppMessage, now: Long): Boolean {
-        val shownAt = lastShown[message.id] ?: return true
+        val shownAt = lastShown[historyKey(message.id)] ?: return true
         return when (message.reEligibility.mode) {
             ReEligibilityMode.ONCE -> false
             ReEligibilityMode.AFTER_HOURS -> now - shownAt >= ((message.reEligibility.hours ?: 0.0) * 3_600_000).toLong()
@@ -67,14 +81,20 @@ internal class InAppEngine(
     }
 
     companion object {
+        const val ANONYMOUS = "anonymous"
+
+        /**
+         * Shared rule with iOS: a property that is missing from the event (absent or null) makes every
+         * operator false, `exists` included; `exists` is true only when the property is present, and its
+         * filter value is ignored.
+         */
         fun filterMatches(filter: PropertyFilter, properties: Map<String, Any?>): Boolean {
-            val present = properties.containsKey(filter.key) && properties[filter.key] != null
-            val actual = properties[filter.key]
+            val actual = properties[filter.key] ?: return false
             val expected = filter.value
             return when (filter.op) {
-                FilterOperator.EXISTS -> present == ((expected as? Boolean) ?: true)
-                FilterOperator.EQ -> present && valuesEqual(actual, expected)
-                FilterOperator.NEQ -> !present || !valuesEqual(actual, expected)
+                FilterOperator.EXISTS -> true
+                FilterOperator.EQ -> valuesEqual(actual, expected)
+                FilterOperator.NEQ -> !valuesEqual(actual, expected)
                 FilterOperator.GT -> compare(actual, expected)?.let { it > 0 } ?: false
                 FilterOperator.GTE -> compare(actual, expected)?.let { it >= 0 } ?: false
                 FilterOperator.LT -> compare(actual, expected)?.let { it < 0 } ?: false

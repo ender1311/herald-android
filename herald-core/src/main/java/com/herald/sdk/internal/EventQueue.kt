@@ -44,6 +44,15 @@ internal class EventQueue(private val file: File, private val cap: Int = 1000) {
         persist()
     }
 
+    /** Gives [userId]'s queued events that have no token the one set later. */
+    fun assignToken(userId: String, token: String) {
+        var changed = false
+        entries.replaceAll { e ->
+            if (e.userId == userId && e.userToken == null) e.copy(userToken = token).also { changed = true } else e
+        }
+        if (changed) persist()
+    }
+
     fun clear() {
         entries.clear()
         dropped = 0

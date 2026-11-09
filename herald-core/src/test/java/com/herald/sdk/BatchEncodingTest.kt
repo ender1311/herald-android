@@ -63,11 +63,15 @@ class BatchEncodingTest {
         val expected = full.getJSONArray("events")
         val actual = batch.getJSONArray("events")
         assertEquals(11, actual.length()) // fixture's 10 plus the new session_start
+        val actualTypes = (0 until actual.length()).map { actual.getJSONObject(it).getString("type") }
+        // New wire rule: push_token precedes the push subscription (the fixture predates it).
+        assertTrue(actualTypes.indexOf("push_token") < actualTypes.indexOf("subscription"))
         for (i in 0 until expected.length()) {
+            val type = expected.getJSONObject(i).getString("type")
             // sessionId is the session start in epoch ms; the fixture's value is arbitrary.
             val e = JSONObject(expected.getJSONObject(i).toString()).apply { remove("sessionId") }
-            val a = JSONObject(actual.getJSONObject(i).toString()).apply { assertTrue(has("sessionId")); remove("sessionId") }
-            when (e.getString("type")) {
+            val a = JSONObject(actual.getJSONObject(actualTypes.indexOf(type)).toString()).apply { assertTrue(has("sessionId")); remove("sessionId") }
+            when (type) {
                 // Android sends FCM tokens: no APNs environment.
                 "push_token" -> {
                     assertEquals(e.keySet() - "environment", a.keySet())
@@ -76,7 +80,7 @@ class BatchEncodingTest {
                 }
                 // Timestamp and duration depend on the clock; shape must match.
                 "session_end" -> assertEquals(e.keySet(), a.keySet())
-                else -> assertTrue("event $i\nexpected $e\nactual   $a", e.similar(a))
+                else -> assertTrue("event $type\nexpected $e\nactual   $a", e.similar(a))
             }
         }
         assertEquals("session_start", actual.getJSONObject(10).getString("type"))

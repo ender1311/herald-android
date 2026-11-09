@@ -4,7 +4,7 @@ import com.herald.sdk.ContentCard
 import com.herald.sdk.HeraldOptions
 import com.herald.sdk.InAppDisplayDecision
 import com.herald.sdk.InAppMessage
-import com.herald.sdk.InAppMessageListener
+import com.herald.sdk.InAppMessageDelegate
 import com.herald.sdk.SubscriptionChannel
 import com.herald.sdk.SubscriptionState
 import com.herald.sdk.TriggerType
@@ -37,13 +37,22 @@ internal class HeraldCore(
     private val endpoint = endpoint.trimEnd('/')
     private val state = StateStore(File(dir, "herald_state.json"))
     val queue = EventQueue(File(dir, "herald_queue.json"), QUEUE_CAP)
-    val engine = InAppEngine(clock, options.inAppMinimumIntervalSeconds * 1000, state.lastShown)
+    val engine = InAppEngine(clock, options.inAppMinimumIntervalSeconds * 1000, state.lastShown) {
+        state.userId ?: InAppEngine.ANONYMOUS
+    }
 
-    /** Shows a message; returns false when nothing can draw it right now. Set by the facade. */
+    /**
+     * Hands a message to the presenter. Returns false when nothing can draw it right now; otherwise the
+     * facade later reports [presentAccepted] or [presentFailed]. Set by the facade.
+     */
     var display: ((InAppMessage) -> Boolean)? = null
-    var listener: () -> InAppMessageListener? = { null }
 
-    private val pending = ArrayDeque<InAppMessage>()
+    /** Asks the presenter to take down the message on screen (user switch). Set by the facade. */
+    var dismissDisplay: (() -> Unit)? = null
+    var delegate: () -> InAppMessageDelegate? = { null }
+
+    /** Messages the delegate answered LATER for; shown only through [showNext]. */
+    private val held = ArrayDeque<InAppMessage>()
     private val impressedThisSession = mutableSetOf<String>()
     private var clickedOnScreen = false
     private var foreground = false
@@ -111,7 +120,9 @@ internal class HeraldCore(
     // region identity
 
     fun identify(userId: String, traits: Map<String, Any?>) {
-        if (userId.isBlank()) return HeraldLog.warn("identify ignored: blank userId")
+        if (userId.isBlank()) return reject("identify", "userId must not be blank")
+        Validation.length("userId", userId, 1, Validation.MAX_USER_ID)?.let { return reject("identify", it) }
+        Validation.attributes("traits", traits)?.let { return reject("identify", it) }
         val traitsJson = jsonOrNull(traits, "identify traits") ?: return
         val changed = state.userId != userId
         if (changed && state.userId != null) clearUserState()
@@ -124,9 +135,13 @@ internal class HeraldCore(
         }
     }
 
+    /** Binds [token] to the current user. Call it after [identify]: identifying a different user clears it. */
     fun setUserToken(token: String?) {
         state.userToken = token
         state.save()
+        // Events this user queued before the token arrived would otherwise be sent without it.
+        val uid = state.userId
+        if (token != null && uid != null) queue.assignToken(uid, token)
     }
 
     fun reset() {
@@ -140,11 +155,16 @@ internal class HeraldCore(
         state.etag = null
         state.messagesBody = null
         state.dismissedCardIds.clear()
-        state.lastShown.clear()
+        // lastShown stays: display history is keyed per user and only wipeData clears it.
+        state.undeliveredIds.clear()
         engine.messages = emptyList()
-        pending.clear()
+        held.clear()
         impressedThisSession.clear()
         contentCards.value = emptyList()
+        if (engine.onScreen != null) {
+            engine.markDismissed()
+            dismissDisplay?.invoke()
+        }
     }
 
     fun setEnabled(enabled: Boolean) {
@@ -156,6 +176,8 @@ internal class HeraldCore(
         queue.clear()
         clearUserState()
         state.delete()
+        state.lastShown.clear()
+        state.recentPushOpens.clear()
         state.deviceId = newId()
         state.pushToken = null
         state.sessionId = null
@@ -171,19 +193,26 @@ internal class HeraldCore(
     // region events
 
     fun track(name: String, properties: Map<String, Any?>) {
-        if (name.isBlank()) return HeraldLog.warn("track ignored: blank event name")
+        Validation.length("event name", name, 1, Validation.MAX_NAME)?.let { return reject("track", it) }
+        Validation.properties("properties", properties)?.let { return reject("track", it) }
         val props = jsonOrNull(properties, "track properties") ?: return
         enqueue("track") { put("name", name).put("properties", props) }
         trigger(TriggerEvent(TriggerType.EVENT, name, properties))
     }
 
     fun screen(name: String, properties: Map<String, Any?>) {
+        Validation.length("screen name", name, 1, Validation.MAX_NAME)?.let { return reject("screen", it) }
+        Validation.properties("properties", properties)?.let { return reject("screen", it) }
         val props = jsonOrNull(properties, "screen properties") ?: return
         enqueue("screen") { put("name", name).put("properties", props) }
     }
 
     fun trackPurchase(productId: String, price: Double, currency: String, quantity: Int, properties: Map<String, Any?>) {
-        if (!price.isFinite()) return HeraldLog.warn("trackPurchase ignored: price is not finite")
+        Validation.length("productId", productId, 1, Validation.MAX_NAME)?.let { return reject("trackPurchase", it) }
+        if (currency.length != 3) return reject("trackPurchase", "currency must be a 3-letter ISO 4217 code")
+        if (quantity < 1) return reject("trackPurchase", "quantity must be at least 1")
+        if (!price.isFinite()) return reject("trackPurchase", "price is not finite")
+        Validation.properties("properties", properties)?.let { return reject("trackPurchase", it) }
         val props = jsonOrNull(properties, "purchase properties") ?: return
         enqueue("purchase") {
             put("productId", productId).put("price", price).put("currency", currency)
@@ -192,17 +221,10 @@ internal class HeraldCore(
     }
 
     fun setAttributes(attributes: Map<String, Any?>) {
-        val json = JSONObject()
-        attributes.forEach { (key, value) ->
-            if (key.isEmpty() || key.length > 255) {
-                HeraldLog.warn("Attribute key must be 1-255 characters; skipped")
-            } else if (!isValidAttributeValue(value)) {
-                HeraldLog.warn("Attribute '$key' has an unsupported value type; skipped")
-            } else {
-                json.put(key, toJsonValue(value))
-            }
-        }
-        if (json.length() > 0) enqueue("attributes") { put("attributes", json) }
+        if (attributes.isEmpty()) return
+        Validation.attributes("attribute", attributes)?.let { return reject("setAttributes", it) }
+        val json = jsonOrNull(attributes, "attributes") ?: return
+        enqueue("attributes") { put("attributes", json) }
     }
 
     fun setSubscription(channel: SubscriptionChannel, subscriptionState: SubscriptionState) {
@@ -210,7 +232,8 @@ internal class HeraldCore(
     }
 
     fun setPushToken(token: String) {
-        if (token.isBlank()) return
+        if (token.isBlank()) return reject("setPushToken", "token must not be blank")
+        Validation.length("token", token, 1, Validation.MAX_PUSH_TOKEN)?.let { return reject("setPushToken", it) }
         state.pushToken = token
         state.save()
         enqueuePushToken(token)
@@ -246,13 +269,7 @@ internal class HeraldCore(
         null
     }
 
-    private fun isValidAttributeValue(value: Any?): Boolean = when (value) {
-        null, is String, is Boolean -> true
-        is Number -> value.toDouble().isFinite()
-        is Collection<*> -> value.all { it is String }
-        is Array<*> -> value.all { it is String }
-        else -> false
-    }
+    private fun reject(call: String, problem: String) = HeraldLog.warn("$call ignored: $problem")
 
     // endregion
 
@@ -321,8 +338,22 @@ internal class HeraldCore(
         .put("sentAt", isoTimestamp(clock()))
         .put("dropped", dropped)
         .put("context", contextProvider().toJson(options.deviceDataCollection))
-        .put("events", JSONArray(batch.map { it.event }))
+        .put("events", JSONArray(orderForWire(batch.map { it.event })))
         .toString()
+
+    /**
+     * Wire rule: within a batch, push_token comes before any push subscription event, so the server
+     * has the token when it applies the opt-in. Moves later push_tokens to just before the first one.
+     */
+    private fun orderForWire(events: List<JSONObject>): List<JSONObject> {
+        val firstSubscription = events.indexOfFirst { it.optString("type") == "subscription" && it.optString("channel") == "push" }
+        if (firstSubscription < 0) return events
+        val (lateTokens, rest) = events.withIndex().partition { (i, e) -> i > firstSubscription && e.optString("type") == "push_token" }
+        if (lateTokens.isEmpty()) return events
+        val result = rest.map { it.value }.toMutableList()
+        result.addAll(firstSubscription, lateTokens.map { it.value })
+        return result
+    }
 
     // endregion
 
@@ -362,6 +393,8 @@ internal class HeraldCore(
             !it.dismissed && it.id !in state.dismissedCardIds && (it.expiresAt == null || it.expiresAt > now)
         }
         engine.messages = payload.inAppMessages
+        val ids = payload.inAppMessages.map { it.id }.toSet()
+        if (state.undeliveredIds.retainAll(ids)) state.save()
     }
 
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
@@ -396,9 +429,13 @@ internal class HeraldCore(
     }
 
     private fun logInteraction(messageId: String, kind: String, action: String, decisionId: String?, buttonId: String? = null) {
+        Validation.length("messageId", messageId, 1, Validation.MAX_MESSAGE_ID)?.let { return reject("interaction", it) }
+        if (buttonId != null) Validation.length("buttonId", buttonId, 1, Validation.MAX_MESSAGE_ID)?.let { return reject("interaction", it) }
+        val decision = decisionId?.takeIf { it.isNotEmpty() }
+        if (decision != null) Validation.length("decisionId", decision, 1, Validation.MAX_MESSAGE_ID)?.let { return reject("interaction", it) }
         enqueue("interaction") {
             put("messageId", messageId).put("kind", kind).put("action", action)
-                .putOpt("decisionId", decisionId).putOpt("buttonId", buttonId)
+                .putOpt("decisionId", decision).putOpt("buttonId", buttonId)
         }
     }
 
@@ -410,48 +447,83 @@ internal class HeraldCore(
         if (!state.enabled) return
         val message = engine.evaluate(event) ?: return
         val decision = try {
-            listener()?.shouldDisplay(message) ?: InAppDisplayDecision.DISPLAY
+            delegate()?.shouldDisplay(message) ?: InAppDisplayDecision.DISPLAY
         } catch (e: Exception) {
-            HeraldLog.error("InAppMessageListener threw; displaying", e)
+            HeraldLog.error("InAppMessageDelegate threw; displaying", e)
             InAppDisplayDecision.DISPLAY
         }
         when (decision) {
-            InAppDisplayDecision.DISPLAY -> show(message)
-            InAppDisplayDecision.LATER -> pending.addLast(message)
-            InAppDisplayDecision.DISCARD -> HeraldLog.debug("In-app message ${message.id} discarded by listener")
+            InAppDisplayDecision.DISPLAY -> present(message)
+            InAppDisplayDecision.LATER -> hold(message)
+            InAppDisplayDecision.DISCARD -> HeraldLog.debug("In-app message ${message.id} discarded by delegate")
         }
     }
 
-    /** Displays the most recently held message, if nothing is on screen. Skips the listener and interval. */
+    private fun hold(message: InAppMessage) {
+        held.removeAll { it.id == message.id }
+        held.addLast(message)
+        while (held.size > MAX_HELD) held.removeFirst()
+    }
+
+    /** Displays the most recently held message, if nothing is on screen. Skips the delegate and interval. */
     fun showNext(): Boolean {
         if (engine.onScreen != null) return false
-        while (pending.isNotEmpty()) {
-            val message = pending.removeLast()
+        while (held.isNotEmpty()) {
+            val message = held.removeLast()
             if (engine.isLive(message)) {
-                show(message)
+                present(message)
                 return true
             }
         }
         return false
     }
 
-    private fun show(message: InAppMessage) {
-        engine.markDisplayed(message)
-        state.save()
+    /**
+     * Retries triggered messages that could not be drawn (no activity or presenter at the time).
+     * The facade calls it on every activity resume. Still one message at a time, after the interval.
+     */
+    fun retryUndelivered() {
+        if (!state.enabled || engine.onScreen != null || !engine.intervalElapsed()) return
+        val candidates = state.undeliveredIds.mapNotNull { id -> engine.messages.firstOrNull { it.id == id } }
+        val live = candidates.filter { engine.isLive(it) && engine.isEligible(it) }
+        if (live.size != state.undeliveredIds.size) {
+            state.undeliveredIds.retainAll(live.map { it.id }.toSet())
+            state.save()
+        }
+        live.maxByOrNull { it.priority }?.let(::present)
+    }
+
+    private fun present(message: InAppMessage) {
+        engine.beginPresenting(message)
         clickedOnScreen = false
-        val shown = try {
+        val handedOver = try {
             display?.invoke(message) ?: false
         } catch (e: Exception) {
             HeraldLog.error("In-app display failed", e)
             false
         }
-        if (!shown) presentFailed(message)
+        if (!handedOver) presentFailed(message)
     }
 
-    /** No presenter or activity could take the message: free the screen and hold it for [showNext]. */
+    /** The presenter showed the message: only now is it marked shown and the interval started. */
+    fun presentAccepted(message: InAppMessage) {
+        engine.recordShown(message)
+        state.undeliveredIds.remove(message.id)
+        state.save()
+    }
+
+    /** Nothing could draw the message: free the screen and keep it for the next activity resume. */
     fun presentFailed(message: InAppMessage) {
         if (engine.onScreen?.id == message.id) engine.markDismissed()
-        pending.addLast(message)
+        if (message.id !in state.undeliveredIds) {
+            state.undeliveredIds.add(message.id)
+            state.save()
+        }
+    }
+
+    /** The activity showing the message went away without onDismiss: free the screen, log nothing. */
+    fun presenterGone(message: InAppMessage) {
+        if (engine.onScreen?.id == message.id) engine.markDismissed()
     }
 
     fun onInAppImpression(message: InAppMessage) =
@@ -472,20 +544,27 @@ internal class HeraldCore(
         if (!clickedOnScreen) logInteraction(message.id, "in_app", "dismiss", message.decisionId)
     }
 
-    val pendingCount: Int get() = pending.size
+    val heldCount: Int get() = held.size
+    val undeliveredIds: List<String> get() = state.undeliveredIds.toList()
 
     // endregion
 
     // region push
 
     fun onPushOpened(messageId: String, decisionId: String?) {
+        // The system redelivers the original intent extras after recreation; count each open once.
+        val key = decisionId ?: messageId
+        if (key in state.recentPushOpens) return
+        state.recentPushOpens.add(key)
+        while (state.recentPushOpens.size > MAX_RECENT_OPENS) state.recentPushOpens.removeAt(0)
+        state.save()
         logInteraction(messageId, "push", "open", decisionId)
         if (foreground) trigger(TriggerEvent(TriggerType.PUSH_OPEN)) else pushOpenTriggerDue = true
     }
 
     fun setLocation(latitude: Double, longitude: Double) {
         if (latitude !in -90.0..90.0 || longitude !in -180.0..180.0) return HeraldLog.warn("setLocation ignored: out of range")
-        setAttributes(mapOf("latitude" to latitude, "longitude" to longitude))
+        setAttributes(mapOf("\$latitude" to latitude, "\$longitude" to longitude))
     }
 
     // endregion
@@ -495,5 +574,7 @@ internal class HeraldCore(
         const val QUEUE_CAP = 1000
         const val MAX_BATCH_EVENTS = 100
         const val MAX_BATCH_BYTES = 500_000
+        const val MAX_HELD = 20
+        const val MAX_RECENT_OPENS = 50
     }
 }

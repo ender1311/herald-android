@@ -76,7 +76,7 @@ enum class InAppDisplayDecision { DISPLAY, LATER, DISCARD }
  * Lets the app hold or drop a triggered message. Called on the SDK's background thread;
  * return quickly. LATER keeps the message for [Herald.showNext].
  */
-fun interface InAppMessageListener {
+fun interface InAppMessageDelegate {
     fun shouldDisplay(message: InAppMessage): InAppDisplayDecision
 }
 
@@ -94,8 +94,12 @@ interface InAppMessageCallbacks {
 
 /**
  * Draws in-app messages. herald-ui supplies the default; apps may provide their own.
- * Called on the main thread. Return false if the message could not be shown; Herald keeps it for [Herald.showNext].
+ * Called on the main thread. Return true only when the message is now on screen; Herald then marks it
+ * shown. Return false and Herald retries it on the next activity resume.
  */
 fun interface InAppMessagePresenter {
     fun present(activity: Activity, message: InAppMessage, callbacks: InAppMessageCallbacks): Boolean
+
+    /** Take down the message on screen without user action (the user was reset or switched). Main thread. */
+    fun dismissCurrent() {}
 }

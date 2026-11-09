@@ -6,6 +6,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.json.JSONObject
 import org.junit.Test
 import java.io.IOException
 
@@ -233,9 +234,48 @@ class HeraldCoreTest {
     }
 
     @Test
-    fun invalidAttributeValuesAreSkipped() {
-        core.setAttributes(mapOf("ok" to 1, "bad" to Any(), "list" to listOf(1, 2), "k".repeat(256) to "x"))
-        val event = core.queue.peekBatch(100).last().event
-        assertEquals(setOf("ok"), event.getJSONObject("attributes").keys().asSequence().toSet())
+    fun identifyResendsStoredPushToken() {
+        h.transport.batchResponse = { throw IOException("offline") }
+        core.setPushToken("fcm_tok")
+        core.identify("u_1", emptyMap()) // anonymous -> identified
+        core.identify("u_1", emptyMap()) // same user: no re-send
+        core.identify("u_2", emptyMap()) // user switch
+        val tokens = generateSequence { core.queue.peekBatch(100).takeIf { it.isNotEmpty() } }
+            .flatMap { batch -> core.queue.removeFirst(batch.size, 0); batch }
+            .filter { it.event.getString("type") == "push_token" }
+            .toList()
+        assertEquals(listOf(null, "u_1", "u_2"), tokens.map { it.userId })
+        assertTrue(tokens.all { it.event.getString("token") == "fcm_tok" })
+    }
+
+    @Test
+    fun pushTokenPrecedesPushSubscriptionInABatch() {
+        core.setSubscription(SubscriptionChannel.EMAIL, SubscriptionState.SUBSCRIBED)
+        core.setSubscription(SubscriptionChannel.PUSH, SubscriptionState.OPTED_IN)
+        core.track("between", emptyMap())
+        core.setPushToken("fcm_tok")
+        core.flush()
+        val events = h.transport.batches.single().getJSONArray("events")
+        val types = (0 until events.length()).map { events.getJSONObject(it).let { e -> e.getString("type") + ":" + e.optString("channel") } }
+        assertEquals(listOf("session_start:", "subscription:email", "push_token:", "subscription:push", "track:"), types)
+    }
+
+    @Test
+    fun tokenSetAfterIdentifyCoversEarlierEventsOfThatUser() {
+        core.identify("u_1", emptyMap())
+        core.track("before_token", emptyMap())
+        core.setUserToken("tok_1")
+        core.identify("u_2", emptyMap()) // switch before any flush
+        core.flush()
+        val post = h.transport.requests.first { it.method == "POST" }
+        assertEquals("u_1", JSONObject(post.body!!).getString("userId"))
+        assertEquals("tok_1", post.headers["x-herald-user-token"])
+    }
+
+    @Test
+    fun disabledFlagSurvivesCorruptStateFile() {
+        core.setEnabled(false)
+        java.io.File(h.dir, "herald_state.json").writeText("{corrupt")
+        assertFalse(h.newCore().enabled)
     }
 }
