@@ -34,6 +34,9 @@ data class HeraldPushPayload(
         /** Intent extra (Int) with the id of the notification herald-fcm posted, so a tap can clear it. */
         const val KEY_NOTIFICATION_ID = "herald_notification_id"
 
+        /** Intent extra with the id of the notification action button the user tapped. */
+        const val KEY_ACTION_ID = "herald_action_id"
+
         /** Tag herald-fcm posts its notifications under. */
         const val NOTIFICATION_TAG = "herald"
 

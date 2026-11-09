@@ -576,7 +576,8 @@ internal class HeraldCore(
 
     // region push
 
-    fun onPushOpened(messageId: String, decisionId: String?) {
+    /** [buttonId] is the notification action the user tapped; it logs a `button` interaction after the open. */
+    fun onPushOpened(messageId: String, decisionId: String?, buttonId: String? = null) {
         // The system redelivers the original intent extras after recreation; count each decision's open once.
         // Without a decisionId there is no per-send key (a messageId can repeat across sends), so no dedupe.
         if (decisionId != null) {
@@ -586,6 +587,7 @@ internal class HeraldCore(
             state.save()
         }
         logInteraction(messageId, "push", "open", decisionId)
+        if (buttonId != null) logInteraction(messageId, "push", "button", decisionId, buttonId)
         if (foreground) trigger(TriggerEvent(TriggerType.PUSH_OPEN)) else pushOpenTriggerDue = true
     }
 

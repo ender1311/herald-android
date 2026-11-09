@@ -201,4 +201,15 @@ class InAppDisplayTest {
         assertEquals("open", opens[0].getString("action"))
         assertEquals("dec_9", opens[0].getString("decisionId"))
     }
+
+    @Test
+    fun pushActionTapLogsOpenThenButtonOnce() {
+        core.onPushOpened("dec_7", "dec_7", "b_start")
+        core.onPushOpened("dec_7", "dec_7", "b_start") // redelivered intent
+        val push = interactions().filter { it.getString("kind") == "push" }
+        assertEquals(listOf("open", "button"), push.map { it.getString("action") })
+        assertEquals("b_start", push[1].getString("buttonId"))
+        assertTrue(push.all { it.getString("decisionId") == "dec_7" && it.getString("messageId") == "dec_7" })
+        assertFalse(push[0].has("buttonId"))
+    }
 }

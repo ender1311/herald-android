@@ -132,7 +132,7 @@ object HeraldNotifications {
         }
         actions.forEachIndexed { index, action ->
             val actionPayload = payload.copy(deeplink = action.deeplink ?: payload.deeplink)
-            val intent = openIntent(context, actionPayload, notificationId, index + 1) ?: return@forEachIndexed
+            val intent = openIntent(context, actionPayload, notificationId, index + 1, action.id) ?: return@forEachIndexed
             builder.addAction(Notification.Action.Builder(null as Icon?, action.title, intent).build())
         }
         manager.notify(TAG, notificationId, builder.build())
@@ -141,10 +141,17 @@ object HeraldNotifications {
     /** Tag for Herald notifications; `Herald.handleNotificationIntent` cancels by tag and id. */
     const val TAG = HeraldPushPayload.NOTIFICATION_TAG
 
-    private fun openIntent(context: Context, payload: HeraldPushPayload, notificationId: Int, slot: Int): PendingIntent? {
+    private fun openIntent(
+        context: Context,
+        payload: HeraldPushPayload,
+        notificationId: Int,
+        slot: Int,
+        actionId: String? = null,
+    ): PendingIntent? {
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return null
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         payload.putInto(launch).putExtra(HeraldPushPayload.KEY_NOTIFICATION_ID, notificationId)
+        actionId?.let { launch.putExtra(HeraldPushPayload.KEY_ACTION_ID, it) }
         return PendingIntent.getActivity(
             context,
             notificationId * 4 + slot,

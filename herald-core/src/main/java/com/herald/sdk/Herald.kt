@@ -216,9 +216,11 @@ object Herald {
             intent?.removeExtra(HeraldPushPayload.KEY_DECISION_ID)
             intent?.removeExtra(HeraldPushPayload.KEY_MESSAGE_ID)
             intent?.removeExtra(HeraldPushPayload.KEY_DEEPLINK)
+            val actionId = intent?.getStringExtra(HeraldPushPayload.KEY_ACTION_ID)?.takeIf { it.isNotEmpty() }
+            intent?.removeExtra(HeraldPushPayload.KEY_ACTION_ID)
             cancelNotification(intent)
             val messageId = payload.messageId ?: payload.decisionId ?: return false
-            submit { it.onPushOpened(messageId, payload.decisionId) }
+            submit { it.onPushOpened(messageId, payload.decisionId, actionId) }
             payload.deeplink?.let(::openUrl)
             true
         }
