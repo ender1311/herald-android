@@ -193,7 +193,10 @@ object Herald {
     @JvmStatic
     fun setEnabled(enabled: Boolean) = submit { it.setEnabled(enabled) }
 
-    /** Deletes every piece of SDK data on the device, including queued events, and starts with a new device id. */
+    /**
+     * Deletes every piece of SDK data on the device, including queued events, and disables the SDK.
+     * Call `setEnabled(true)` to start again with a new device id.
+     */
     @JvmStatic
     fun wipeData() = submit { it.wipeData() }
 

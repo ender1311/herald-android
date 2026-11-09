@@ -224,15 +224,30 @@ class HeraldCoreTest {
     }
 
     @Test
-    fun wipeDataDeletesEverythingAndRotatesDeviceId() {
+    fun wipeDataDeletesEverythingAndDisablesUntilReEnabled() {
         h.transport.batchResponse = { throw IOException("offline") }
+        core.setPushToken("fcm_tok")
         core.identify("u_1", emptyMap())
         val oldDevice = core.deviceId
         core.wipeData()
         assertEquals(0, core.queue.size)
         assertNull(core.userId)
-        assertNotEquals(oldDevice, core.deviceId)
-        assertEquals(core.deviceId, h.newCore().deviceId)
+        assertFalse(core.enabled)
+        // Nothing is collected or stored while disabled, even across a restart.
+        core.track("after_wipe", emptyMap())
+        assertEquals(0, core.queue.size)
+        assertFalse(java.io.File(h.dir, "herald_state.json").exists())
+        val restarted = h.newCore()
+        assertFalse(restarted.enabled)
+        assertFalse(java.io.File(h.dir, "herald_state.json").exists())
+
+        restarted.setEnabled(true)
+        assertNotEquals(oldDevice, restarted.deviceId)
+        assertEquals(restarted.deviceId, h.newCore().deviceId)
+        restarted.track("back", emptyMap())
+        val events = restarted.queue.peekBatch(100)
+        assertEquals(listOf("session_start", "track"), events.map { it.event.getString("type") })
+        assertTrue(events.all { it.userId == null })
     }
 
     @Test

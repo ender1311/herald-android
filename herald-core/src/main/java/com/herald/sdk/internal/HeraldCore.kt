@@ -64,14 +64,12 @@ internal class HeraldCore(
         private set
 
     val userId: String? get() = state.userId
+    /** Set whenever the SDK is enabled; null only after [wipeData] until [setEnabled] (true). */
     val deviceId: String get() = state.deviceId!!
     val enabled: Boolean get() = state.enabled
 
     init {
-        if (state.deviceId == null) {
-            state.deviceId = newId()
-            state.save()
-        }
+        ensureDeviceId()
         state.messagesBody?.let(MessageParser::parse)?.let(::apply)
     }
 
@@ -198,21 +196,32 @@ internal class HeraldCore(
     fun setEnabled(enabled: Boolean) {
         state.enabled = enabled
         state.save()
+        if (enabled) ensureDeviceId()
     }
 
+    /** A disabled SDK after [wipeData] keeps no device id on disk; a new one is made when it is enabled again. */
+    private fun ensureDeviceId() {
+        if (state.deviceId != null || !state.enabled) return
+        state.deviceId = newId()
+        state.save()
+    }
+
+    /**
+     * Deletes every file and in-memory record and leaves the SDK disabled until `setEnabled(true)` (a wipe
+     * usually means consent was withdrawn), as on iOS. Re-enabling starts with a new device id.
+     */
     fun wipeData() {
         state.sessionId = null // no session_end: everything is being deleted
         queue.clear()
         clearUserState()
-        state.delete()
         state.lastShown.clear()
         state.recentPushOpens.clear()
-        state.deviceId = newId()
+        state.deviceId = null
         state.pushToken = null
-        state.sessionId = null
         state.sessionStart = 0
         state.lastActivity = 0
-        state.save()
+        state.enabled = false
+        state.delete()
         failures = 0
         nextAttemptAt = 0
     }

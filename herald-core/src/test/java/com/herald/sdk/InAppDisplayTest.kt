@@ -157,6 +157,7 @@ class InAppDisplayTest {
         assertEquals(2, shown.size) // u_1 already saw the once-only message
 
         core.wipeData()
+        core.setEnabled(true)
         core.identify("u_1", emptyMap())
         h.clock.advance(60_000)
         core.track("workout_completed", mapOf("minutes" to 32))
