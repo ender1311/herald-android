@@ -34,6 +34,8 @@ dependencies {
     api(project(":herald-core"))
     api(platform("androidx.compose:compose-bom:2024.09.02"))
     api("androidx.compose.ui:ui")
+    // ContentCardFeed takes a PaddingValues, so apps must see compose-foundation.
+    api("androidx.compose.foundation:foundation")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
