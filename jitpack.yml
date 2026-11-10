@@ -1,0 +1,5 @@
+jdk:
+  - openjdk17
+install:
+  # Publish the three libraries only; the sample app is not published.
+  - ./gradlew :herald-core:publishToMavenLocal :herald-ui:publishToMavenLocal :herald-fcm:publishToMavenLocal -Pversion=$VERSION -x test
