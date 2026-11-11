@@ -37,6 +37,11 @@ internal class StateStore(private val file: File) {
     val recentPushOpens: MutableList<String> = mutableListOf()
     /** Cards whose impression this session already logged; cleared when a session starts. */
     val impressedCardIds: MutableSet<String> = mutableSetOf()
+    /**
+     * The server refused an identified request without a user token (identity verification is required):
+     * identified syncs wait for `setUserToken` instead of collecting a 401.
+     */
+    var userTokenRequired = false
 
     init {
         load()
@@ -61,6 +66,7 @@ internal class StateStore(private val file: File) {
             .put("undeliveredIds", JSONArray(undeliveredIds.toList()))
             .put("recentPushOpens", JSONArray(recentPushOpens.toList()))
             .put("impressedCardIds", JSONArray(impressedCardIds.toList()))
+            .put("userTokenRequired", userTokenRequired)
         try {
             file.writeAtomically(json.toString())
         } catch (e: Exception) {
@@ -95,6 +101,7 @@ internal class StateStore(private val file: File) {
             lastActivity = json.num("lastActivity")?.toLong() ?: 0
             etag = json.str("etag")
             messagesBody = json.str("messagesBody")
+            userTokenRequired = json.optBoolean("userTokenRequired", false)
             json.arr("dismissedCardIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(dismissedCardIds::add) } }
             json.arr("undeliveredIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(undeliveredIds::add) } }
             json.arr("recentPushOpens")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(recentPushOpens::add) } }

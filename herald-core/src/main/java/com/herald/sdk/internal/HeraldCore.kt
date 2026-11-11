@@ -308,6 +308,7 @@ internal class HeraldCore(
         state.pushToken = null
         state.sessionStart = 0
         state.lastActivity = 0
+        state.userTokenRequired = false
         state.enabled = false
         state.delete()
         failures = 0
@@ -486,6 +487,8 @@ internal class HeraldCore(
                     // Most likely identify() ran and setUserToken() has not yet: keep the events for the token.
                     if (usersAwaitingToken.isEmpty()) HeraldLog.warn("Herald needs a user token: call setUserToken")
                     usersAwaitingToken.add(batchUser)
+                    state.userTokenRequired = true
+                    state.save()
                     failures = 0
                     nextAttemptAt = 0
                 } else {
@@ -549,14 +552,19 @@ internal class HeraldCore(
         syncMessages()
     }
 
-    /** Anonymous users sync too (as on iOS); the server returns empty lists for them. */
+    /**
+     * Anonymous users sync too (as on iOS); the server returns empty lists for them. Identified without a token
+     * on a server known to require one, it waits for [setUserToken] (which syncs) instead of collecting a 401.
+     */
     fun syncMessages() {
         if (!state.enabled) return
         val uid = state.userId
+        val sentToken = if (uid != null) state.userToken else null
+        if (uid != null && sentToken == null && state.userTokenRequired) return HeraldLog.debug("Message sync waits for setUserToken")
         val url = "$endpoint/api/v1/sdk/messages?deviceId=${encode(deviceId)}" + (uid?.let { "&userId=${encode(it)}" } ?: "")
         val headers = buildMap {
             put("x-herald-app-key", appKey)
-            if (uid != null) state.userToken?.let { put("x-herald-user-token", it) }
+            sentToken?.let { put("x-herald-user-token", it) }
             state.etag?.let { put("If-None-Match", it) }
         }
         val response = try {
@@ -571,8 +579,22 @@ internal class HeraldCore(
                     ?: return HeraldLog.warn("Message sync returned an unreadable body")
                 state.etag = response.header("ETag")
                 state.messagesBody = response.body
+                // Accepted without a token: verification is not required (any more).
+                if (uid != null && sentToken == null) state.userTokenRequired = false
                 state.save()
                 apply(payload)
+            }
+            401 -> if (uid != null && !isAppKeyRejection(response.body)) {
+                state.userTokenRequired = true
+                state.save()
+                // Expected before the first setUserToken, which syncs again: not an error then.
+                if (sentToken == null) {
+                    HeraldLog.debug("Message sync needs a user token; waiting for setUserToken")
+                } else {
+                    HeraldLog.warn("Message sync got 401: Herald refused the user token")
+                }
+            } else {
+                HeraldLog.warn("Message sync got 401: ${response.body.take(300)}")
             }
             else -> HeraldLog.warn("Message sync got ${response.status}: ${response.body.take(300)}")
         }

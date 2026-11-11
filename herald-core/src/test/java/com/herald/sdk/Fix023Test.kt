@@ -86,4 +86,40 @@ class Fix023Test {
         assertEquals(null, scheduled) // nothing left to expire
         assertTrue("no sync", h.transport.gets.isEmpty())
     }
+
+    // D8: once the server has refused an identified sync without a token, identified syncs wait for
+    // setUserToken instead of collecting another 401.
+    @Test
+    fun identifiedSyncWaitsForTokenWhenVerificationIsRequired() {
+        val normal = h.transport.messagesResponse
+        h.transport.messagesResponse = { request ->
+            if ("userId=" in request.url && "x-herald-user-token" !in request.headers) {
+                com.herald.sdk.internal.HttpResponse(401, emptyMap(), """{"error":"Invalid user token"}""")
+            } else {
+                normal(request)
+            }
+        }
+        core.identify("u1", emptyMap())
+        val unauthorized = h.transport.gets.count { "userId=" in it.url && "x-herald-user-token" !in it.headers }
+        assertEquals("one 401 teaches the SDK", 1, unauthorized)
+        core.setUserToken("tok1")
+        assertEquals("tok1", h.transport.gets.last().headers["x-herald-user-token"])
+
+        val before = h.transport.gets.size
+        core.identify("u2", emptyMap()) // a switch: new session, no token yet
+        core.syncMessages()
+        assertEquals("no request without the token", before, h.transport.gets.size)
+        core.setUserToken("tok2")
+        assertEquals(before + 1, h.transport.gets.size)
+        assertEquals("tok2", h.transport.gets.last().headers["x-herald-user-token"])
+    }
+
+    @Test
+    fun identifiedSyncWithoutVerificationStillRunsWithoutToken() {
+        core.identify("u1", emptyMap())
+        assertTrue(h.transport.gets.any { "userId=u1" in it.url })
+        core.reset()
+        core.identify("u2", emptyMap())
+        assertTrue(h.transport.gets.any { "userId=u2" in it.url })
+    }
 }
