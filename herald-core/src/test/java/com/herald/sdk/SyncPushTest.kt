@@ -8,6 +8,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** Herald sync pushes (`herald_sync` = "1"); matches `SyncPushTests.swift`. */
 class SyncPushTest {
@@ -46,6 +47,25 @@ class SyncPushTest {
     fun syncPushIsNotAnOpenablePush() {
         assertNull(HeraldPushPayload.fromData(mapOf("herald_sync" to "1", "herald_message_id" to "m1")))
         assertNotNull(HeraldPushPayload.fromData(mapOf("herald_message_id" to "m1")))
+    }
+
+    @Test
+    fun handleRemoteMessageWaitsForTheRefreshOffTheMainThread() {
+        core.identify("u_1", emptyMap())
+        Herald.startForTesting(core)
+        Herald.handleRemoteMessage(mapOf("herald_sync" to "1")) // drains calls buffered by other tests
+        h.clock.advance(31_000)
+        val gets = h.transport.gets.size
+        val completed = AtomicBoolean(false)
+        h.transport.messagesResponse = {
+            Thread.sleep(300)
+            completed.set(true)
+            HttpResponse(304, emptyMap(), "")
+        }
+
+        assertTrue(Herald.handleRemoteMessage(mapOf("herald_sync" to "1")))
+        assertTrue("returns only after the sync request completed", completed.get())
+        assertEquals(gets + 1, h.transport.gets.size)
     }
 
     @Test

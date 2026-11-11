@@ -2,6 +2,12 @@
 
 Releases follow the policy on [Versioning and support](https://beaconfrontier.com/herald/docs/operations/versioning-and-support). iOS and Android share version numbers.
 
+## 0.2.1
+
+### Fixed
+
+- `Herald.handleRemoteMessage` waits for the sync push refresh to finish (8 seconds at most) before it returns, so FCM no longer stops the process mid-refresh. Called on the main thread it still returns at once.
+
 ## 0.2.0
 
 ### Added

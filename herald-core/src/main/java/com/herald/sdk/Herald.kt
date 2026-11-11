@@ -31,7 +31,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * The Herald SDK entry point. Every call is safe from any thread, returns immediately, and never
@@ -275,15 +277,33 @@ object Herald {
      * new cards or in-app messages for the user. Refreshes cards and in-app messages (with the usual ETag
      * check; nothing happens while the SDK is disabled) and returns true; returns false for other messages.
      * A sync push never shows a notification and is never logged as an open. One that arrives within 30 s of
-     * the last refreshed one is skipped. herald-fcm's `HeraldMessagingService` calls this for you; call it
-     * from `onMessageReceived` only in your own FirebaseMessagingService.
+     * the last refreshed one is skipped. Off the main thread (as in `onMessageReceived`) it returns only once
+     * the refresh has finished, or after 8 s at most, so FCM does not stop the process
+     * mid-refresh; on the main thread, or before [configure], it starts the refresh and returns at once.
+     * herald-fcm's `HeraldMessagingService` calls this for you; call it from `onMessageReceived` only in
+     * your own FirebaseMessagingService.
      */
     @JvmStatic
     fun handleRemoteMessage(data: Map<String, String>): Boolean {
         if (!HeraldPushPayload.isSync(data)) return false
-        submit { it.syncFromPush() }
+        if (scope == null || Looper.getMainLooper()?.isCurrentThread == true) {
+            submit { it.syncFromPush() }
+            return true
+        }
+        val done = CountDownLatch(1)
+        submit { core ->
+            try {
+                core.syncFromPush()
+            } finally {
+                done.countDown()
+            }
+        }
+        if (!done.await(SYNC_PUSH_WAIT_MS, TimeUnit.MILLISECONDS)) HeraldLog.info("Sync push refresh still running after ${SYNC_PUSH_WAIT_MS} ms")
         return true
     }
+
+    /** FCM gives `onMessageReceived` about 10 s; [handleRemoteMessage] waits for the refresh at most this long. */
+    private const val SYNC_PUSH_WAIT_MS = 8_000L
 
     /** Action-button taps do not auto-cancel a notification, so clear the one the tap came from. */
     private fun cancelNotification(intent: Intent?) {
@@ -346,6 +366,18 @@ object Herald {
     }
 
     // Internals
+
+    /** Tests only: starts the SDK thread with [testCore] in place of the one [configure] builds. */
+    internal fun startForTesting(testCore: HeraldCore) {
+        synchronized(this) {
+            val dispatcher = Executors.newSingleThreadExecutor { r -> Thread(r, "herald-sdk").apply { isDaemon = true } }
+                .asCoroutineDispatcher()
+            val newScope = CoroutineScope(SupervisorJob() + dispatcher)
+            scope = newScope
+            newScope.launch { core = testCore }
+            pending.start { block -> newScope.launch { runCall(block) } }
+        }
+    }
 
     private fun submit(block: (HeraldCore) -> Unit) {
         if (pending.offer(block)) return
