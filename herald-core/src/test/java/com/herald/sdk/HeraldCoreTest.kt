@@ -60,6 +60,24 @@ class HeraldCoreTest {
         assertEquals(0, core.queue.size)
     }
 
+    /** Fix round 2: a 401 for a wrong app key keeps every event (identified or anonymous) and stops sending. */
+    @Test
+    fun invalidAppKeyKeepsEventsAndStopsSending() {
+        for (user in listOf(null, "u1")) {
+            val h = CoreHarness()
+            val core = h.newCore()
+            if (user != null) core.identify(user, emptyMap()) else core.track("a", emptyMap())
+            val queued = core.queue.size
+            h.transport.batchResponse = { HttpResponse(401, emptyMap(), """{"error":"Invalid app key"}""") }
+            core.flush()
+            assertEquals("user ${user ?: "anonymous"}: nothing dropped", queued, core.queue.size)
+            h.transport.batchResponse = { HttpResponse(200, emptyMap(), """{"data":{"accepted":1,"duplicates":0}}""") }
+            core.setUserToken("tok1")
+            core.flush()
+            assertEquals("no more sends until the next launch", 1, h.transport.batches.size)
+        }
+    }
+
     @Test
     fun anonymousEventsStillFlushWhileAUserWaitsForToken() {
         core.identify("u1", emptyMap())

@@ -69,6 +69,9 @@ internal class HeraldCore(
 
     /** Users whose batch got 401: their events stay queued and unsent until [setUserToken]. */
     private val usersAwaitingToken = mutableSetOf<String>()
+
+    /** The server refused the app key: nothing is sent (and nothing dropped) until the next launch. */
+    private var appKeyRejected = false
     private var activityPersistedAt = 0L
 
     /** When the last sync push refreshed; one within [SYNC_PUSH_DEBOUNCE_MS] of it is skipped. */
@@ -420,7 +423,7 @@ internal class HeraldCore(
     // region delivery
 
     fun flush() {
-        if (!state.enabled) return
+        if (!state.enabled || appKeyRejected) return
         while (true) {
             if (clock() < nextAttemptAt) return
             var batch = queue.peekBatch(MAX_BATCH_EVENTS, usersAwaitingToken)
@@ -467,7 +470,12 @@ internal class HeraldCore(
                     scheduleRetry(Backoff.retryAfterSeconds(response, clock()))
                     return
                 }
-                else -> if (response.status == 401 && batchUser != null) {
+                else -> if (response.status == 401 && isAppKeyRejection(response.body)) {
+                    // Retrying cannot help, but dropping would lose the events to a configuration mistake.
+                    HeraldLog.error("Herald rejected the app key: check the publishable key in configure")
+                    appKeyRejected = true
+                    return
+                } else if (response.status == 401 && batchUser != null) {
                     // Most likely identify() ran and setUserToken() has not yet: keep the events for the token.
                     if (usersAwaitingToken.isEmpty()) HeraldLog.warn("Herald needs a user token: call setUserToken")
                     usersAwaitingToken.add(batchUser)
@@ -481,6 +489,10 @@ internal class HeraldCore(
             }
         }
     }
+
+    /** A 401 whose body is the server's `{"error":"Invalid app key"}` (src/lib/sdk/auth.ts). */
+    private fun isAppKeyRejection(body: String): Boolean =
+        runCatching { JSONObject(body).optString("error") == "Invalid app key" }.getOrDefault(false)
 
     private fun scheduleRetry(retryAfterSeconds: Long?) {
         failures++

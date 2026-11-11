@@ -12,6 +12,7 @@ Releases follow the policy on [Versioning and support](https://beaconfrontier.co
 ### Fixed
 
 - Events recorded between `identify` and `setUserToken` are no longer lost. A 401 on a signed-in user's batch keeps it on the device, logs `Herald needs a user token: call setUserToken` once and holds that user's events until `setUserToken` is called, which sends them. Anonymous events keep flowing; the 1,000-event queue cap still applies.
+- A 401 whose body is `Invalid app key` no longer drops events: the SDK keeps them, logs `Herald rejected the app key: check the publishable key in configure` and sends nothing more until the next launch.
 - `setEnabled(false)` and `wipeData()` first send one best-effort `subscription` push `unsubscribed` event for the device (only when it has a push token), so Herald stops sending it pushes. herald-fcm does not show Herald pushes while the SDK is disabled. Cached content cards are hidden while disabled and come back on `setEnabled(true)`, which also re-sends the stored push token and a push `subscribed` event when notifications are enabled, so pushes resume.
 - herald-ui: an in-app message that sets `backgroundColor` without `textColor` (or `buttonColor` without `buttonTextColor`) gets black or white text by WCAG contrast instead of the theme's text color, so it stays readable in dark mode.
 

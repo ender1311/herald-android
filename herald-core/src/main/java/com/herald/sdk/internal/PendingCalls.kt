@@ -8,17 +8,21 @@ internal class PendingCalls<T>(private val capacity: Int = CAPACITY) {
     private var calls: MutableList<T>? = mutableListOf()
     private var warned = false
 
-    /** Buffers [call] and returns true while not started; returns false once started (run it directly). */
+    enum class Offer { BUFFERED, DROPPED, STARTED }
+
+    /** Buffers [call] while not started (or drops it past [capacity]); [Offer.STARTED] means run it directly. */
     @Synchronized
-    fun offer(call: T): Boolean {
-        val buffer = calls ?: return false
+    fun offer(call: T): Offer {
+        val buffer = calls ?: return Offer.STARTED
         if (buffer.size < capacity) {
             buffer.add(call)
-        } else if (!warned) {
+            return Offer.BUFFERED
+        }
+        if (!warned) {
             warned = true
             HeraldLog.warn("More than $capacity calls before Herald.configure; dropping later ones until it runs")
         }
-        return true
+        return Offer.DROPPED
     }
 
     /**

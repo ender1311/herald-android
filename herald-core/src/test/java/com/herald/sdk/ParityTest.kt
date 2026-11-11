@@ -33,11 +33,12 @@ class ParityTest {
     @Test
     fun callsBeforeConfigureAreReplayedInOrderAndBounded() {
         val pending = PendingCalls<Int>(capacity = 3)
-        (1..5).forEach { assertTrue(pending.offer(it)) }
+        (1..3).forEach { assertEquals(PendingCalls.Offer.BUFFERED, pending.offer(it)) }
+        (4..5).forEach { assertEquals(PendingCalls.Offer.DROPPED, pending.offer(it)) }
         val replayed = mutableListOf<Int>()
         pending.start { replayed += it }
         assertEquals(listOf(1, 2, 3), replayed) // overflow dropped
-        assertFalse(pending.offer(6)) // started: callers run directly
+        assertEquals(PendingCalls.Offer.STARTED, pending.offer(6)) // started: callers run directly
         pending.start { replayed += it } // a second configure replays nothing
         assertEquals(listOf(1, 2, 3), replayed)
         assertEquals(1000, PendingCalls.CAPACITY)

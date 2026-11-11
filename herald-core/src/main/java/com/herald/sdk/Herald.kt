@@ -242,8 +242,7 @@ object Herald {
      */
     @JvmStatic
     fun setEnabled(enabled: Boolean) {
-        enabledState = enabled
-        submit { it.setEnabled(enabled) }
+        if (trySubmit { it.setEnabled(enabled) }) enabledState = enabled
     }
 
     /**
@@ -253,8 +252,7 @@ object Herald {
      */
     @JvmStatic
     fun wipeData() {
-        enabledState = false
-        submit { it.wipeData() }
+        if (trySubmit { it.wipeData() }) enabledState = false
     }
 
     // Push
@@ -423,8 +421,17 @@ object Herald {
     }
 
     private fun submit(block: (HeraldCore) -> Unit) {
-        if (pending.offer(block)) return
-        scope?.launch { runCall(block) }
+        trySubmit(block)
+    }
+
+    /** Returns false when the call was dropped (more than 1,000 calls before [configure]). */
+    private fun trySubmit(block: (HeraldCore) -> Unit): Boolean {
+        when (pending.offer(block)) {
+            PendingCalls.Offer.BUFFERED -> return true
+            PendingCalls.Offer.DROPPED -> return false
+            PendingCalls.Offer.STARTED -> scope?.launch { runCall(block) }
+        }
+        return true
     }
 
     private fun runCall(block: (HeraldCore) -> Unit) {
