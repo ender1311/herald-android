@@ -279,6 +279,11 @@ object Herald {
             }
             // The prompt pauses this activity; its answer is read on the next resume (see lifecycle).
             pushPermission.requested()
+            val app = activity.applicationContext
+            submit {
+                // From now on the device context reports denied (not not_determined) while it is not granted.
+                AndroidDeviceContext.pushPermissionMarker(app).apply { parentFile?.mkdirs() }.createNewFile()
+            }
             activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), PUSH_PERMISSION_REQUEST_CODE)
         }
     }

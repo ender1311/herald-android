@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import java.io.File
 import java.util.Locale
 import java.util.TimeZone
 
@@ -55,6 +56,24 @@ internal class AndroidDeviceContext(context: Context) {
 
     private fun pushAuthorization(): String? = runCatching {
         val nm = app.getSystemService(NotificationManager::class.java) ?: return null
-        if (nm.areNotificationsEnabled()) "authorized" else "denied"
+        val sdk = Build.VERSION.SDK_INT
+        val granted = sdk < 33 || app.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        pushAuthorizationValue(sdk, granted, nm.areNotificationsEnabled(), pushPermissionMarker(app).exists())
     }.getOrNull()
+
+    companion object {
+        /** Written when `Herald.requestPushAuthorization` shows the Android 13+ prompt. Kept by `wipeData()`. */
+        fun pushPermissionMarker(context: Context) =
+            File(context.filesDir.resolve(StateStore.STORAGE_DIR), "push_permission_requested")
+
+        /**
+         * iOS value names. Android 13+: `not_determined` until the permission has been requested, then
+         * `authorized` or `denied`. Before 13 the permission is implicit: authorized unless notifications are off.
+         */
+        fun pushAuthorizationValue(sdkInt: Int, permissionGranted: Boolean, notificationsEnabled: Boolean, requested: Boolean) = when {
+            sdkInt >= 33 && !permissionGranted -> if (requested) "denied" else "not_determined"
+            notificationsEnabled -> "authorized"
+            else -> "denied"
+        }
+    }
 }
