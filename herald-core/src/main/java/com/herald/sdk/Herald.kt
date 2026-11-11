@@ -96,6 +96,9 @@ object Herald {
 
     /** SDK thread only: wakes the core when the in-app minimum interval runs out. */
     private var showRetry: Job? = null
+
+    /** SDK thread only: drops content cards when the soonest one expires. */
+    private var cardRefresh: Job? = null
     private var startedActivities = 0
 
     @Volatile
@@ -142,6 +145,7 @@ object Herald {
                             it.dismissDisplay = ::dismissDisplay
                             it.delegate = { inAppMessageDelegate }
                             it.scheduleShowRetry = ::scheduleShowRetry
+                            it.scheduleCardRefresh = ::scheduleCardRefresh
                             it.requestPushToken = { PushTokenSource.request?.invoke() }
                         }
                     }
@@ -491,6 +495,19 @@ object Herald {
                 core?.showPendingIfPossible()
             } catch (e: Exception) {
                 HeraldLog.error("In-app retry failed", e)
+            }
+        }
+    }
+
+    private fun scheduleCardRefresh(delayMs: Long?) {
+        cardRefresh?.cancel()
+        if (delayMs == null) return
+        cardRefresh = scope?.launch {
+            delay(delayMs.coerceAtLeast(0))
+            try {
+                core?.refreshCards()
+            } catch (e: Exception) {
+                HeraldLog.error("Card refresh failed", e)
             }
         }
     }

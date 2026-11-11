@@ -61,6 +61,9 @@ internal class HeraldCore(
     /** Asks the facade to call [showPendingIfPossible] after this many ms (the minimum interval's rest). */
     var scheduleShowRetry: ((Long) -> Unit)? = null
 
+    /** Asks the facade to call [refreshCards] after this many ms (when the soonest card expires); null cancels. */
+    var scheduleCardRefresh: ((Long?) -> Unit)? = null
+
     /** Asks for the current push token again (herald-fcm fetches it and calls [setPushToken]). Set by the facade. */
     var requestPushToken: (() -> Unit)? = null
     private var clickedOnScreen = false
@@ -216,7 +219,7 @@ internal class HeraldCore(
         state.undeliveredIds.clear()
         engine.messages = emptyList()
         state.impressedCardIds.clear()
-        contentCards.value = emptyList()
+        publishCards(emptyList())
         if (engine.onScreen != null) {
             engine.markDismissed()
             dismissDisplay?.invoke()
@@ -229,7 +232,7 @@ internal class HeraldCore(
         state.enabled = enabled
         state.save()
         if (!enabled) {
-            contentCards.value = emptyList() // hidden until enabled again
+            publishCards(emptyList()) // hidden until enabled again
             return
         }
         ensureDeviceId()
@@ -576,15 +579,26 @@ internal class HeraldCore(
     }
 
     private fun apply(payload: MessagesPayload) {
-        val now = clock()
         // Cached cards stay hidden while the SDK is disabled.
-        contentCards.value = if (!state.enabled) emptyList() else payload.contentCards.filter {
-            !it.dismissed && it.id !in state.dismissedCardIds && (it.expiresAt == null || it.expiresAt > now)
-        }
+        publishCards(if (!state.enabled) emptyList() else payload.contentCards.filter { !it.dismissed && it.id !in state.dismissedCardIds })
         engine.messages = payload.inAppMessages
         val ids = payload.inAppMessages.map { it.id }.toSet()
         if (state.undeliveredIds.retainAll(ids)) state.save()
     }
+
+    /**
+     * Every card list goes out through here: expired cards are dropped, and a refresh is scheduled for when the
+     * soonest remaining one expires, so an open feed loses it without a sync. Same rule as iOS.
+     */
+    private fun publishCards(cards: List<ContentCard>) {
+        val now = clock()
+        val live = cards.filter { it.expiresAt == null || it.expiresAt > now }
+        contentCards.value = live
+        scheduleCardRefresh?.invoke(live.mapNotNull { it.expiresAt }.minOrNull()?.let { it - now })
+    }
+
+    /** Drops cards that expired since the last publish (the facade calls it at the scheduled time). */
+    fun refreshCards() = publishCards(contentCards.value)
 
     private fun encode(value: String) = URLEncoder.encode(value, "UTF-8")
 
@@ -612,14 +626,14 @@ internal class HeraldCore(
         val card = contentCards.value.firstOrNull { it.id == cardId } ?: return
         state.dismissedCardIds.add(cardId)
         state.save()
-        contentCards.value = contentCards.value.filterNot { it.id == cardId }
+        publishCards(contentCards.value.filterNot { it.id == cardId })
         logInteraction(card.id, "content_card", "dismiss", card.decisionId)
     }
 
     private fun updateCard(cardId: String, change: (ContentCard) -> ContentCard): ContentCard? {
         val card = contentCards.value.firstOrNull { it.id == cardId }
             ?: return null.also { HeraldLog.warn("Unknown content card $cardId") }
-        contentCards.value = contentCards.value.map { if (it.id == cardId) change(it) else it }
+        publishCards(contentCards.value.map { if (it.id == cardId) change(it) else it })
         return card
     }
 

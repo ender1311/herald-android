@@ -66,4 +66,24 @@ class Fix023Test {
         relaunched.flush()
         assertEquals(listOf(id, id), impressions())
     }
+
+    // D4: an expired card leaves the published list at its expiry time, without a sync.
+    @Test
+    fun expiredCardIsUnpublishedAtExpiry() {
+        var scheduled: Long? = null
+        core.scheduleCardRefresh = { scheduled = it }
+        val soon = java.time.Instant.ofEpochMilli(FIXTURE_NOW + 70_000).toString()
+        val body = """{"data":{"syncedAt":null,"inAppMessages":[],"contentCards":[
+            {"id":"soon","type":"classic","createdAt":"2026-11-09T13:00:00Z","expiresAt":"$soon"},
+            {"id":"stays","type":"classic","createdAt":"2026-11-09T13:00:00Z","expiresAt":null}]}}"""
+        core.debugLoadMessages(body)
+        assertEquals(listOf("soon", "stays"), h.cards.value.map { it.id })
+        assertEquals(70_000L, scheduled)
+
+        h.clock.advance(70_000)
+        core.refreshCards() // what the facade runs at the scheduled time
+        assertEquals(listOf("stays"), h.cards.value.map { it.id })
+        assertEquals(null, scheduled) // nothing left to expire
+        assertTrue("no sync", h.transport.gets.isEmpty())
+    }
 }
