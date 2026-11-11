@@ -13,7 +13,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -198,29 +198,38 @@ private fun CloseButton(tint: Color, actions: InAppMessageActions, modifier: Mod
     }
 }
 
-/** A banner at the top or bottom edge. Tap opens the first button's action; swipe sideways to dismiss. */
+/** Slideup drag offset: follows the finger only toward the banner's edge (up for top, down for bottom). */
+internal fun slideupDrag(current: Float, delta: Float, fromTop: Boolean): Float =
+    if (fromTop) (current + delta).coerceAtMost(0f) else (current + delta).coerceAtLeast(0f)
+
+/**
+ * A banner at the top or bottom edge. Tap opens the first button's action; swipe it toward its edge (up for a
+ * top banner, down for a bottom one) to dismiss, as on iOS.
+ */
 @Composable
 fun SlideupMessageView(message: InAppMessage, actions: InAppMessageActions, theme: HeraldTheme) {
     val colors = messageColors(message.style, theme)
     val dismissLabel = stringResource(R.string.herald_dismiss)
-    var dragX by remember { mutableFloatStateOf(0f) }
+    var dragY by remember { mutableFloatStateOf(0f) }
+    val fromTop = message.slidesFromTop
     val first = message.content.buttons.firstOrNull()
     // Only the edge the banner sits on: the view is wrap-content at that edge.
-    val edge = if (message.slidesFromTop) WindowInsetsSides.Top else WindowInsetsSides.Bottom
+    val edge = if (fromTop) WindowInsetsSides.Top else WindowInsetsSides.Bottom
     val insets = WindowInsets.safeDrawing.only(edge + WindowInsetsSides.Horizontal)
     Box(Modifier.fillMaxWidth().windowInsetsPadding(insets).padding(theme.spacing / 2)) {
         Column(
             Modifier
-                .offset { IntOffset(dragX.roundToInt(), 0) }
+                .offset { IntOffset(0, dragY.roundToInt()) }
                 .fillMaxWidth()
                 .heightIn(min = 48.dp)
                 .clip(RoundedCornerShape(colors.cornerRadius))
                 .background(colors.background)
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures(
-                        onDragEnd = { if (abs(dragX) > size.width / 3f) actions.dismiss() else dragX = 0f },
-                        onDragCancel = { dragX = 0f },
-                    ) { _, delta -> dragX += delta }
+                .pointerInput(fromTop) {
+                    detectVerticalDragGestures(
+                        // 40 dp toward the edge, as on iOS.
+                        onDragEnd = { if (abs(dragY) > 40.dp.toPx()) actions.dismiss() else dragY = 0f },
+                        onDragCancel = { dragY = 0f },
+                    ) { _, delta -> dragY = slideupDrag(dragY, delta, fromTop) }
                 }
                 .clickable(role = Role.Button) { if (first != null) actions.buttonClicked(first) else actions.dismiss() }
                 .semantics { customActions = listOf(CustomAccessibilityAction(dismissLabel) { actions.dismiss(); true }) }

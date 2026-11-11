@@ -61,4 +61,12 @@ class FeedLogicTest {
         assertFalse(isUserNavigation(isMainFrame = true, hasGesture = false)) // redirect, meta refresh
         assertFalse(isUserNavigation(isMainFrame = false, hasGesture = true)) // iframe
     }
+
+    @Test
+    fun slideupDragsOnlyTowardItsEdge() {
+        assertEquals(-30f, slideupDrag(0f, -30f, fromTop = true), 0f) // top banner: up
+        assertEquals(0f, slideupDrag(0f, 30f, fromTop = true), 0f) // never down
+        assertEquals(30f, slideupDrag(0f, 30f, fromTop = false), 0f) // bottom banner: down
+        assertEquals(0f, slideupDrag(10f, -30f, fromTop = false), 0f) // never up
+    }
 }
