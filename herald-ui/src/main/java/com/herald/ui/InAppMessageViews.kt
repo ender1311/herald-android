@@ -55,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
@@ -108,15 +109,40 @@ internal fun parseHexColor(hex: String?): Color? =
     hex?.let { runCatching { Color(AndroidColor.parseColor(it.trim())) }.getOrNull() }
 
 @Composable
-internal fun messageColors(style: InAppStyle, theme: HeraldTheme): MessageColors {
-    val colors = theme.colors()
-    return MessageColors(
-        background = parseHexColor(style.backgroundColor) ?: colors.surface,
-        text = parseHexColor(style.textColor) ?: colors.onSurface,
-        button = parseHexColor(style.buttonColor) ?: colors.accent,
-        buttonText = parseHexColor(style.buttonTextColor) ?: colors.onAccent,
-        cornerRadius = style.cornerRadius?.dp ?: theme.cornerRadius,
-    )
+internal fun messageColors(style: InAppStyle, theme: HeraldTheme): MessageColors = messageColors(
+    background = parseHexColor(style.backgroundColor),
+    text = parseHexColor(style.textColor),
+    button = parseHexColor(style.buttonColor),
+    buttonText = parseHexColor(style.buttonTextColor),
+    cornerRadius = style.cornerRadius?.dp ?: theme.cornerRadius,
+    colors = theme.colors(),
+)
+
+/**
+ * Each null style color falls back to the theme, except text on a style color: a set background (or button)
+ * color without its text color gets black or white, whichever reads better on it, since the theme's text color
+ * is picked for the theme's own background. Same rule as iOS.
+ */
+internal fun messageColors(
+    background: Color?,
+    text: Color?,
+    button: Color?,
+    buttonText: Color?,
+    cornerRadius: Dp,
+    colors: HeraldColors,
+) = MessageColors(
+    background = background ?: colors.surface,
+    text = text ?: background?.let(::readableTextOn) ?: colors.onSurface,
+    button = button ?: colors.accent,
+    buttonText = buttonText ?: button?.let(::readableTextOn) ?: colors.onAccent,
+    cornerRadius = cornerRadius,
+)
+
+/** Black or white, whichever has the higher WCAG contrast ratio against [color] (alpha ignored). */
+internal fun readableTextOn(color: Color): Color {
+    val luminance = color.copy(alpha = 1f).luminance()
+    // Contrast with black is (L + 0.05) / 0.05, with white 1.05 / (L + 0.05).
+    return if ((luminance + 0.05f) / 0.05f >= 1.05f / (luminance + 0.05f)) Color.Black else Color.White
 }
 
 /** TalkBack announces the message header as a heading, as VoiceOver does on iOS. */
