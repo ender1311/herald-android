@@ -27,7 +27,7 @@ android {
         applicationId = "com.herald.sample"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
+        versionCode = 3
         versionName = "0.2.3"
         buildConfigField("String", "HERALD_ENDPOINT", "\"${localProperty("herald.endpoint", "https://herald.example.com")}\"")
         buildConfigField("String", "HERALD_APP_KEY", "\"${localProperty("herald.appKey", "pk_test_replace_me")}\"")

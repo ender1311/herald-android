@@ -107,6 +107,8 @@ internal class HeraldCore(
             sessionTriggerDue = false
             trigger(TriggerEvent(TriggerType.SESSION_START))
         }
+        // The refresh delay does not count deep sleep: drop cards that expired meanwhile and reschedule.
+        refreshCards()
         showPendingIfPossible()
     }
 
@@ -468,6 +470,11 @@ internal class HeraldCore(
             }
             when (response.status) {
                 in 200..299 -> {
+                    // A signed-in batch accepted without a token: verification is off, so identified syncs resume.
+                    if (batchUser != null && token == null && state.userTokenRequired) {
+                        state.userTokenRequired = false
+                        state.save()
+                    }
                     failures = 0
                     nextAttemptAt = 0
                     queue.remove(batch, dropped)

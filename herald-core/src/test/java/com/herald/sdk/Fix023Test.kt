@@ -122,4 +122,36 @@ class Fix023Test {
         core.identify("u2", emptyMap())
         assertTrue(h.transport.gets.any { "userId=u2" in it.url })
     }
+
+    // Review I1: a signed-in batch accepted without a token clears the flag, so identified syncs resume.
+    @Test
+    fun tokenlessBatchAcceptedClearsTokenRequired() {
+        val normal = h.transport.messagesResponse
+        var refuse = true
+        h.transport.messagesResponse = { request ->
+            if (refuse && "userId=" in request.url) com.herald.sdk.internal.HttpResponse(401, emptyMap(), """{"error":"Invalid user token"}""")
+            else normal(request)
+        }
+        core.identify("u1", emptyMap())
+        val before = h.transport.gets.size
+        core.syncMessages()
+        assertEquals("waits for a token", before, h.transport.gets.size)
+        refuse = false
+        core.flush() // the server accepts u1's batch without a token: verification is off
+        core.syncMessages()
+        assertEquals(before + 1, h.transport.gets.size)
+    }
+
+    // Review M3: returning to the foreground drops cards that expired while the device slept.
+    @Test
+    fun foregroundDropsCardsThatExpiredWhileAsleep() {
+        val soon = java.time.Instant.ofEpochMilli(FIXTURE_NOW + 70_000).toString()
+        core.debugLoadMessages("""{"data":{"syncedAt":null,"inAppMessages":[],"contentCards":[
+            {"id":"soon","type":"classic","createdAt":"2026-11-09T13:00:00Z","expiresAt":"$soon"},
+            {"id":"stays","type":"classic","createdAt":"2026-11-09T13:00:00Z","expiresAt":null}]}}""")
+        h.clock.advance(80_000) // the scheduled refresh did not run in deep sleep
+        h.transport.messagesResponse = { com.herald.sdk.internal.HttpResponse(304, emptyMap(), "") } // the sync keeps the cache
+        core.onForeground()
+        assertEquals(listOf("stays"), h.cards.value.map { it.id })
+    }
 }
