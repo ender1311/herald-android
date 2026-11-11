@@ -60,6 +60,9 @@ internal class HeraldCore(
 
     /** Asks the facade to call [showPendingIfPossible] after this many ms (the minimum interval's rest). */
     var scheduleShowRetry: ((Long) -> Unit)? = null
+
+    /** Asks for the current push token again (herald-fcm fetches it and calls [setPushToken]). Set by the facade. */
+    var requestPushToken: (() -> Unit)? = null
     private val impressedThisSession = mutableSetOf<String>()
     private var clickedOnScreen = false
     private var foreground = false
@@ -237,14 +240,16 @@ internal class HeraldCore(
     }
 
     /**
-     * Undoes the unsubscribe sent when the SDK was turned off: when the device still has its push token and
-     * notifications are enabled, queues the token and a `subscription push subscribed` for the next batch.
+     * Undoes the unsubscribe sent when the SDK was turned off: when notifications are enabled, queues the push
+     * token and a `subscription push subscribed` for the next batch. With no stored token (after [wipeData]) it
+     * asks for the token again; the subscription waits for it, as any push opt-in does. Same rule as iOS.
      */
     private fun restorePushIfAuthorized() {
-        val token = state.pushToken ?: return
         if (contextProvider().pushAuthorization != "authorized") return
-        enqueuePushToken(token)
+        val token = state.pushToken
+        if (token != null) enqueuePushToken(token)
         setSubscription(SubscriptionChannel.PUSH, SubscriptionState.SUBSCRIBED)
+        if (token == null) requestPushToken?.invoke()
     }
 
     /**

@@ -19,6 +19,7 @@ import com.herald.sdk.internal.PendingCalls
 import com.herald.sdk.internal.PushPermissionRequest
 import com.herald.sdk.internal.StateStore
 import com.herald.sdk.push.HeraldPushPayload
+import com.herald.sdk.push.PushTokenSource
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -141,6 +142,7 @@ object Herald {
                             it.dismissDisplay = ::dismissDisplay
                             it.delegate = { inAppMessageDelegate }
                             it.scheduleShowRetry = ::scheduleShowRetry
+                            it.requestPushToken = { PushTokenSource.request?.invoke() }
                         }
                     }
                 } finally {

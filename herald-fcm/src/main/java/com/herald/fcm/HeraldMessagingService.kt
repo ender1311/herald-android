@@ -7,6 +7,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import com.herald.sdk.Herald
+import com.herald.sdk.push.PushTokenSource
 
 /**
  * Registered by herald-fcm's manifest. Sends new FCM tokens to Herald, shows Herald pushes that
@@ -30,10 +31,13 @@ open class HeraldMessagingService : FirebaseMessagingService() {
         /**
          * Fetches the current FCM token and passes it to [Herald.setPushToken]. Call after `Herald.configure`
          * so a token issued before Herald was added is registered too. Does nothing when Firebase is not
-         * initialized (no google-services.json).
+         * initialized (no google-services.json). Also lets Herald fetch the token again when it is turned back
+         * on after `wipeData()`.
          */
         @JvmStatic
         fun syncToken(context: Context) {
+            val app = context.applicationContext
+            PushTokenSource.request = { syncToken(app) }
             try {
                 if (FirebaseApp.getApps(context).isEmpty()) {
                     Log.w("Herald", "Firebase is not initialized; push token not synced")
