@@ -2,6 +2,20 @@
 
 Releases follow the policy on [Versioning and support](https://beaconfrontier.com/herald/docs/operations/versioning-and-support). iOS and Android share version numbers.
 
+## 0.2.3
+
+### Fixed
+
+- Push comes back after `wipeData()` then `setEnabled(true)` while notifications are still allowed: the SDK asks herald-fcm to fetch the FCM token again (FCM does not issue an unchanged token on its own), then sends it and a push `subscribed`. Needs `HeraldMessagingService.syncToken(context)` after `configure`, as documented.
+- herald-ui: HTML in-app messages have a native close button at the top end (44 dp, the theme's text color, TalkBack label from `herald_close`), as on iOS.
+- Content card impressions are logged once per card per session, including across relaunches. Reset when a session starts or the user changes.
+- An expired content card leaves `Herald.contentCards` (and an open `ContentCardFeed`) at its expiry time, without waiting for a sync.
+- Once the server has refused an identified message sync without a user token, later identified syncs wait for `setUserToken` instead of collecting a 401. The expected 401 before the first `setUserToken` is logged at debug level.
+- `context.push.authorization` is `not_determined` on Android 13+ until the app has asked through `Herald.requestPushAuthorization`, then `authorized` or `denied` (it was `denied` before the app ever asked). Below Android 13: `authorized` unless notifications are turned off.
+- herald-ui: slideups dismiss by swiping toward their edge (up for a top slideup, down for a bottom one), as on iOS, instead of sideways.
+- herald-ui: `ContentCardFeed` re-filters when Compose state that the `filter` lambda reads changes (for example a selected category).
+- Sample app: registers a `lumen://` intent filter, so its deep links open the app.
+
 ## 0.2.2
 
 ### Added
