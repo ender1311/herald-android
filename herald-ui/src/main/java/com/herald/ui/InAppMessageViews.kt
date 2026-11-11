@@ -192,8 +192,8 @@ private fun MessageButtons(message: InAppMessage, colors: MessageColors, theme: 
 }
 
 @Composable
-private fun CloseButton(tint: Color, actions: InAppMessageActions, modifier: Modifier = Modifier) {
-    IconButton(onClick = actions::dismiss, modifier = modifier.size(48.dp)) {
+private fun CloseButton(tint: Color, actions: InAppMessageActions, modifier: Modifier = Modifier, size: Dp = 48.dp) {
+    IconButton(onClick = actions::dismiss, modifier = modifier.size(size)) {
         Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.herald_close), tint = tint)
     }
 }
@@ -296,57 +296,62 @@ fun FullScreenMessageView(message: InAppMessage, actions: InAppMessageActions, t
  * Renders `content.html` in a WebView. JavaScript is on for this view only, with a `herald` bridge:
  * `herald.close()` dismisses and `herald.click(id)` logs a button click. File and content access are off,
  * and a link the user taps goes to the system (logged as a click, then the message closes). Navigations
- * without a tap (redirects, refreshes, frames) are blocked. If the renderer dies, the message closes.
+ * without a tap (redirects, refreshes, frames) are blocked. If the renderer dies, the message closes. A native
+ * close button sits at the top end, as on iOS.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun HtmlMessageView(message: InAppMessage, actions: InAppMessageActions, theme: HeraldTheme) {
     val colors = messageColors(message.style, theme)
     val background = colors.background.toArgb()
-    AndroidView(
-        modifier = Modifier.fillMaxSize().background(colors.background).safeDrawingPadding(),
-        factory = { context ->
-            // WebView throws while its package is missing or updating: show nothing and close the message.
-            val webView = try {
-                WebView(context)
-            } catch (e: Exception) {
-                Log.w("Herald", "WebView unavailable; HTML message closed", e)
-                return@AndroidView View(context).also { it.post { actions.dismiss() } }
-            }
-            webView.apply {
-                setBackgroundColor(background)
-                settings.javaScriptEnabled = true
-                settings.allowFileAccess = false
-                settings.allowContentAccess = false
-                settings.domStorageEnabled = false
-                settings.setSupportMultipleWindows(false)
-                settings.javaScriptCanOpenWindowsAutomatically = false
-                settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        // Redirects, meta refreshes and frame loads are blocked silently; only a tap is a click.
-                        if (isUserNavigation(request.isForMainFrame, request.hasGesture())) {
-                            actions.bodyClicked(request.url.toString())
-                        }
-                        return true
-                    }
-
-                    // Without this, a renderer crash or kill takes the host app down with it.
-                    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-                        Log.w("Herald", "HTML message renderer gone; message closed")
-                        (view.parent as? ViewGroup)?.removeView(view)
-                        view.tag = DESTROYED
-                        view.destroy()
-                        view.post { actions.dismiss() }
-                        return true
-                    }
+    Box(Modifier.fillMaxSize().background(colors.background).safeDrawingPadding()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                // WebView throws while its package is missing or updating: show nothing and close the message.
+                val webView = try {
+                    WebView(context)
+                } catch (e: Exception) {
+                    Log.w("Herald", "WebView unavailable; HTML message closed", e)
+                    return@AndroidView View(context).also { it.post { actions.dismiss() } }
                 }
-                addJavascriptInterface(HtmlBridge(this, actions), "herald")
-                loadDataWithBaseURL(null, message.content.html.orEmpty(), "text/html", "utf-8", null)
-            }
-        },
-        onRelease = { if (it is WebView && it.tag !== DESTROYED) it.destroy() },
-    )
+                webView.apply {
+                    setBackgroundColor(background)
+                    settings.javaScriptEnabled = true
+                    settings.allowFileAccess = false
+                    settings.allowContentAccess = false
+                    settings.domStorageEnabled = false
+                    settings.setSupportMultipleWindows(false)
+                    settings.javaScriptCanOpenWindowsAutomatically = false
+                    settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                            // Redirects, meta refreshes and frame loads are blocked silently; only a tap is a click.
+                            if (isUserNavigation(request.isForMainFrame, request.hasGesture())) {
+                                actions.bodyClicked(request.url.toString())
+                            }
+                            return true
+                        }
+
+                        // Without this, a renderer crash or kill takes the host app down with it.
+                        override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                            Log.w("Herald", "HTML message renderer gone; message closed")
+                            (view.parent as? ViewGroup)?.removeView(view)
+                            view.tag = DESTROYED
+                            view.destroy()
+                            view.post { actions.dismiss() }
+                            return true
+                        }
+                    }
+                    addJavascriptInterface(HtmlBridge(this, actions), "herald")
+                    loadDataWithBaseURL(null, message.content.html.orEmpty(), "text/html", "utf-8", null)
+                }
+            },
+            onRelease = { if (it is WebView && it.tag !== DESTROYED) it.destroy() },
+        )
+        // Always a way out, even if the page has no close control or never loads (as on iOS).
+        CloseButton(colors.text, actions, Modifier.align(Alignment.TopEnd), size = 44.dp)
+    }
 }
 
 private val DESTROYED = Any()
