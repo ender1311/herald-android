@@ -9,8 +9,9 @@ import com.google.firebase.messaging.RemoteMessage
 import com.herald.sdk.Herald
 
 /**
- * Registered by herald-fcm's manifest. Sends new FCM tokens to Herald and shows Herald pushes that
- * reach the app (data messages, and notification messages while the app is in the foreground).
+ * Registered by herald-fcm's manifest. Sends new FCM tokens to Herald, shows Herald pushes that
+ * reach the app (data messages, and notification messages while the app is in the foreground) and
+ * refreshes cards and in-app messages on a Herald sync push (data-only, never shown).
  * Subclass it and override [onNonHeraldMessage] to handle your other pushes.
  */
 open class HeraldMessagingService : FirebaseMessagingService() {

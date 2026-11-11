@@ -31,6 +31,12 @@ data class HeraldPushPayload(
         const val KEY_BODY = "body"
         const val KEY_IMAGE = "image"
 
+        /** Data key of a Herald sync push (value "1"): a silent refresh, never shown or logged as an open. */
+        const val KEY_SYNC = "herald_sync"
+
+        /** True when an FCM data message is a Herald sync push. */
+        fun isSync(data: Map<String, String>): Boolean = data[KEY_SYNC] == "1"
+
         /** Intent extra (Int) with the id of the notification herald-fcm posted, so a tap can clear it. */
         const val KEY_NOTIFICATION_ID = "herald_notification_id"
 
@@ -40,8 +46,9 @@ data class HeraldPushPayload(
         /** Tag herald-fcm posts its notifications under. */
         const val NOTIFICATION_TAG = "herald"
 
-        /** Parses an FCM `RemoteMessage.data` map; null when the message is not from Herald. */
+        /** Parses an FCM `RemoteMessage.data` map; null when the message is not from Herald or is a sync push. */
         fun fromData(data: Map<String, String>): HeraldPushPayload? {
+            if (isSync(data)) return null
             if (data[KEY_DECISION_ID] == null && data[KEY_MESSAGE_ID] == null) return null
             return HeraldPushPayload(
                 decisionId = data[KEY_DECISION_ID],

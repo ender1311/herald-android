@@ -66,7 +66,7 @@ internal class CoreHarness(
         options = options,
         transport = transport,
         contextProvider = { context },
-        sdkVersion = "0.1.0",
+        sdkVersion = "0.2.0",
         bundleId = "com.lumen.app",
         contentCards = cards,
         clock = { clock.now },

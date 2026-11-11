@@ -64,6 +64,9 @@ internal class HeraldCore(
     private var pushOpenTriggerDue = false
     private var failures = 0
     private var activityPersistedAt = 0L
+
+    /** When the last sync push refreshed; one within [SYNC_PUSH_DEBOUNCE_MS] of it is skipped. */
+    private var lastSyncPushAt: Long? = null
     var nextAttemptAt = 0L
         private set
 
@@ -444,6 +447,21 @@ internal class HeraldCore(
 
     // region messages
 
+    /**
+     * A Herald sync push: refreshes (with the usual ETag) unless another sync push did within
+     * [SYNC_PUSH_DEBOUNCE_MS]. Never shows anything or logs a push interaction.
+     */
+    fun syncFromPush() {
+        if (!state.enabled) return
+        val now = clock()
+        val last = lastSyncPushAt
+        if (last != null && now >= last && now - last < SYNC_PUSH_DEBOUNCE_MS) {
+            return HeraldLog.debug("Sync push skipped: another one refreshed less than 30 s ago")
+        }
+        lastSyncPushAt = now
+        syncMessages()
+    }
+
     /** Anonymous users sync too (as on iOS); the server returns empty lists for them. */
     fun syncMessages() {
         if (!state.enabled) return
@@ -700,5 +718,6 @@ internal class HeraldCore(
         const val MAX_BATCH_EVENTS = 100
         const val MAX_BATCH_BYTES = 512 * 1024
         const val MAX_RECENT_OPENS = 50
+        const val SYNC_PUSH_DEBOUNCE_MS = 30_000L
     }
 }

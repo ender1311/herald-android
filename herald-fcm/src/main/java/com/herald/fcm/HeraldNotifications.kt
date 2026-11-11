@@ -13,6 +13,7 @@ import android.graphics.drawable.Icon
 import android.util.Log
 import androidx.annotation.DrawableRes
 import com.google.firebase.messaging.RemoteMessage
+import com.herald.sdk.Herald
 import com.herald.sdk.push.HeraldPushPayload
 import org.json.JSONArray
 import java.io.ByteArrayOutputStream
@@ -71,12 +72,14 @@ object HeraldNotifications {
     }
 
     /**
-     * Shows [message] when it is a Herald push. Returns false for other pushes, so a custom
+     * Shows [message] when it is a Herald push, or refreshes silently when it is a Herald sync push (see
+     * `Herald.handleRemoteMessage`). Returns false for other pushes, so a custom
      * FirebaseMessagingService can pass them on. Blocks while the image downloads (up to a few seconds);
      * FCM calls `onMessageReceived` off the main thread.
      */
     @JvmStatic
     fun handleRemoteMessage(context: Context, message: RemoteMessage): Boolean {
+        if (Herald.handleRemoteMessage(message.data)) return true
         val payload = payloadOf(message.data, message.notification) ?: return false
         try {
             val channel = message.data[KEY_CHANNEL_ID] ?: message.notification?.channelId
