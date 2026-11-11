@@ -25,7 +25,9 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -71,6 +73,13 @@ object ContentCardFeedDefaults {
 internal fun feedCards(cards: List<ContentCard>, filter: (ContentCard) -> Boolean, order: Comparator<ContentCard>) =
     cards.filter(filter).sortedWith(order)
 
+/**
+ * The feed's cards as derived state: recomputed when [all] changes and also when Compose state that [filter] or
+ * [order] reads changes, even though the lambda instance stays the same.
+ */
+internal fun feedCardsState(all: State<List<ContentCard>>, filter: (ContentCard) -> Boolean, order: Comparator<ContentCard>) =
+    derivedStateOf { feedCards(all.value, filter, order) }
+
 /** A card counts as seen when at least half of it is on screen. */
 internal fun isImpression(visibleHeight: Float, fullHeight: Int) = fullHeight > 0 && visibleHeight / fullHeight >= 0.5f
 
@@ -80,7 +89,7 @@ internal fun isImpression(visibleHeight: Float, fullHeight: Int) = fullHeight > 
  * passed to [onCardClick]; dismissible cards can be swiped away (or dismissed with a TalkBack action),
  * which logs the dismissal.
  *
- * @param filter keeps only the cards it returns true for.
+ * @param filter keeps only the cards it returns true for. Compose state it reads (a selected category) re-runs it.
  * @param order sort order; [ContentCardFeedDefaults.Order] by default.
  * @param onCardClick runs after the click is logged; opens the card url by default.
  * @param emptyContent shown when there are no cards.
@@ -101,8 +110,8 @@ fun ContentCardFeed(
 ) {
     val theme = LocalHeraldTheme.current
     val colors = theme.colors()
-    val all by Herald.contentCards.collectAsState()
-    val cards = remember(all, filter, order) { feedCards(all, filter, order) }
+    val all = Herald.contentCards.collectAsState()
+    val cards by remember(all, filter, order) { feedCardsState(all, filter, order) }
     val impressed = remember { mutableSetOf<String>() }
 
     if (cards.isEmpty()) {

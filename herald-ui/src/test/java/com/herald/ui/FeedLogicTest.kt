@@ -69,4 +69,17 @@ class FeedLogicTest {
         assertEquals(30f, slideupDrag(0f, 30f, fromTop = false), 0f) // bottom banner: down
         assertEquals(0f, slideupDrag(10f, -30f, fromTop = false), 0f) // never up
     }
+
+    @Test
+    fun feedRefiltersWhenStateTheFilterReadsChanges() {
+        val all = androidx.compose.runtime.mutableStateOf(listOf(card("a", false, 1, listOf("news")), card("b", false, 2, listOf("upgrade"))))
+        val category = androidx.compose.runtime.mutableStateOf("news")
+        val filter: (ContentCard) -> Boolean = { category.value in it.categories } // same lambda instance throughout
+        val cards = feedCardsState(all, filter, ContentCardFeedDefaults.Order)
+        assertEquals(listOf("a"), cards.value.map { it.id })
+        category.value = "upgrade"
+        assertEquals(listOf("b"), cards.value.map { it.id })
+        all.value = all.value + card("c", false, 3, listOf("upgrade"))
+        assertEquals(listOf("c", "b"), cards.value.map { it.id })
+    }
 }
