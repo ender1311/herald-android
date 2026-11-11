@@ -31,15 +31,16 @@ internal class EventQueue(private val file: File, private val cap: Int = 1000) {
         persist()
     }
 
-    /** Leading run of events recorded under one user, at most [max]. */
-    fun peekBatch(max: Int): List<QueuedEvent> {
-        val first = entries.firstOrNull() ?: return emptyList()
-        return entries.asSequence().take(max).takeWhile { it.userId == first.userId }.toList()
+    /** Oldest run of events recorded under one user, at most [max], skipping the users in [held]. */
+    fun peekBatch(max: Int, held: Set<String> = emptySet()): List<QueuedEvent> {
+        val sendable = entries.asSequence().filter { it.userId == null || it.userId !in held }
+        val first = sendable.firstOrNull() ?: return emptyList()
+        return sendable.takeWhile { it.userId == first.userId }.take(max).toList()
     }
 
-    /** Removes the first [count] events and subtracts the dropped count the batch reported. */
-    fun removeFirst(count: Int, reportedDropped: Int) {
-        repeat(minOf(count, entries.size)) { entries.removeFirst() }
+    /** Removes [batch] (events from [peekBatch]) and subtracts the dropped count the batch reported. */
+    fun remove(batch: List<QueuedEvent>, reportedDropped: Int) {
+        entries.removeAll { e -> batch.any { it === e } }
         dropped = (dropped - reportedDropped).coerceAtLeast(0)
         persist()
     }

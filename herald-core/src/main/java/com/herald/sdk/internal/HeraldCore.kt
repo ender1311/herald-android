@@ -63,6 +63,9 @@ internal class HeraldCore(
     private var sessionTriggerDue = false
     private var pushOpenTriggerDue = false
     private var failures = 0
+
+    /** Users whose batch got 401: their events stay queued and unsent until [setUserToken]. */
+    private val usersAwaitingToken = mutableSetOf<String>()
     private var activityPersistedAt = 0L
 
     /** When the last sync push refreshed; one within [SYNC_PUSH_DEBOUNCE_MS] of it is skipped. */
@@ -173,6 +176,10 @@ internal class HeraldCore(
             // identify() already synced without the token, which a server requiring verification refuses.
             if (changed) syncMessages()
         }
+        if (usersAwaitingToken.isNotEmpty()) {
+            usersAwaitingToken.clear()
+            flush()
+        }
     }
 
     /** Back to an anonymous user on the same device, with a new session; the push token is sent again. */
@@ -241,6 +248,7 @@ internal class HeraldCore(
         state.delete()
         failures = 0
         nextAttemptAt = 0
+        usersAwaitingToken.clear()
     }
 
     // endregion
@@ -361,7 +369,7 @@ internal class HeraldCore(
         if (!state.enabled) return
         while (true) {
             if (clock() < nextAttemptAt) return
-            var batch = queue.peekBatch(MAX_BATCH_EVENTS)
+            var batch = queue.peekBatch(MAX_BATCH_EVENTS, usersAwaitingToken)
             if (batch.isEmpty()) return
             val dropped = queue.dropped
             var body = encodeBatch(batch, dropped)
@@ -372,7 +380,7 @@ internal class HeraldCore(
             if (body.toByteArray().size > MAX_BATCH_BYTES) {
                 // One event too large to ever send: drop it rather than block the queue (no 413 round trip).
                 HeraldLog.warn("Dropping an event larger than ${MAX_BATCH_BYTES / 1024} KB")
-                queue.removeFirst(1, 0)
+                queue.remove(batch.take(1), 0)
                 continue
             }
             val batchUser = batch.first().userId
@@ -397,7 +405,7 @@ internal class HeraldCore(
                 in 200..299 -> {
                     failures = 0
                     nextAttemptAt = 0
-                    queue.removeFirst(batch.size, dropped)
+                    queue.remove(batch, dropped)
                     HeraldLog.debug("Sent ${batch.size} events")
                 }
                 408, 429, in 500..599 -> {
@@ -405,10 +413,16 @@ internal class HeraldCore(
                     scheduleRetry(Backoff.retryAfterSeconds(response, clock()))
                     return
                 }
-                else -> {
+                else -> if (response.status == 401 && batchUser != null) {
+                    // Most likely identify() ran and setUserToken() has not yet: keep the events for the token.
+                    if (usersAwaitingToken.isEmpty()) HeraldLog.warn("Herald needs a user token: call setUserToken")
+                    usersAwaitingToken.add(batchUser)
+                    failures = 0
+                    nextAttemptAt = 0
+                } else {
                     // 400/401/413 and other client errors never succeed on retry.
                     HeraldLog.error("Herald rejected a batch (${response.status}): ${response.body.take(300)}. Dropping ${batch.size} events.")
-                    queue.removeFirst(batch.size, dropped)
+                    queue.remove(batch, dropped)
                 }
             }
         }

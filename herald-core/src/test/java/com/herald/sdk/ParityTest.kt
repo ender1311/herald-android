@@ -22,7 +22,7 @@ class ParityTest {
         while (true) {
             val batch = core.queue.peekBatch(1000).takeIf { it.isNotEmpty() } ?: return all
             all += batch
-            core.queue.removeFirst(batch.size, 0)
+            core.queue.remove(batch, 0)
         }
     }
 

@@ -32,7 +32,7 @@ class EventQueueTest {
         assertEquals("e4", q.peekBatch(1).single().event.getString("id"))
         assertEquals(3, EventQueue(file, cap = 5).dropped)
 
-        q.removeFirst(2, reportedDropped = 3)
+        q.remove(q.peekBatch(2), reportedDropped = 3)
         assertEquals(0, q.dropped)
         assertEquals(3, EventQueue(file, cap = 5).size)
     }
@@ -42,7 +42,7 @@ class EventQueueTest {
         val q = EventQueue(file)
         q.add(event(1, "a")); q.add(event(2, "a")); q.add(event(3, null)); q.add(event(4, "b"))
         assertEquals(2, q.peekBatch(100).size)
-        q.removeFirst(2, 0)
+        q.remove(q.peekBatch(2), 0)
         assertEquals(null, q.peekBatch(100).single().userId)
     }
 

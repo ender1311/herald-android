@@ -38,6 +38,44 @@ class HeraldCoreTest {
         }
     }
 
+    /** I1: a 401 on an identified batch keeps it until setUserToken, which sends it with the token. */
+    @Test
+    fun unauthorizedIdentifiedBatchWaitsForToken() {
+        core.identify("u1", mapOf("plan" to "free"))
+        core.track("after_login", emptyMap())
+        val queued = core.queue.size
+        h.transport.batchResponse = status(401)
+        core.flush()
+        assertEquals("the batch stays on disk", queued, core.queue.size)
+        core.flush()
+        assertEquals("no retry before setUserToken", 1, h.transport.batches.size)
+
+        h.transport.batchResponse = { HttpResponse(200, emptyMap(), """{"data":{"accepted":1,"duplicates":0}}""") }
+        core.setUserToken("tok1")
+        assertEquals(2, h.transport.batches.size)
+        val sent = h.transport.requests.last { it.method == "POST" }
+        assertEquals("tok1", sent.headers["x-herald-user-token"])
+        val events = h.transport.batches.last().getJSONArray("events")
+        assertTrue((0 until events.length()).any { events.getJSONObject(it).getString("type") == "identify" })
+        assertEquals(0, core.queue.size)
+    }
+
+    @Test
+    fun anonymousEventsStillFlushWhileAUserWaitsForToken() {
+        core.identify("u1", emptyMap())
+        h.transport.batchResponse = status(401)
+        core.flush()
+        val held = core.queue.size
+        h.transport.batchResponse = { HttpResponse(200, emptyMap(), """{"data":{"accepted":1,"duplicates":0}}""") }
+        core.reset()
+        core.track("anon", emptyMap())
+        core.flush()
+        assertEquals(2, h.transport.batches.size)
+        assertTrue(h.transport.batches.last().isNull("userId"))
+        assertTrue("u1's events and its session_end stay queued", core.queue.size >= held)
+        assertTrue(core.queue.peekBatch(1000).all { it.userId == "u1" })
+    }
+
     @Test
     fun dropsASingleOversizeEventLocallyWithoutSending() {
         core.track("big", mapOf("blob" to "x".repeat(520 * 1024)))
@@ -291,7 +329,7 @@ class HeraldCoreTest {
         core.identify("u_1", emptyMap()) // same user: no re-send
         core.identify("u_2", emptyMap()) // user switch
         val tokens = generateSequence { core.queue.peekBatch(100).takeIf { it.isNotEmpty() } }
-            .flatMap { batch -> core.queue.removeFirst(batch.size, 0); batch }
+            .flatMap { batch -> core.queue.remove(batch, 0); batch }
             .filter { it.event.getString("type") == "push_token" }
             .toList()
         assertEquals(listOf(null, "u_1", "u_2"), tokens.map { it.userId })
