@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.File
 import java.lang.ref.WeakReference
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -217,12 +218,33 @@ object Herald {
     fun flush() = submit { it.flush() }
 
     /**
-     * false stops all collection, sending and message display until set back to true. Persisted. Turning it off
-     * first sends one best-effort push unsubscribe for this device, so Herald stops sending it pushes (herald-fcm
-     * also stops showing them), and hides cached content cards until it is turned back on.
+     * The SDK's on/off state as of the latest `setEnabled` / `wipeData` call (calls apply in order, so that is
+     * where the SDK ends up); null until one is made in this process, when the marker on disk answers.
+     */
+    @Volatile
+    internal var enabledState: Boolean? = null
+
+    /**
+     * Whether the SDK is on: false after `setEnabled(false)` or `wipeData()` until `setEnabled(true)`. Reflects
+     * those calls at once and otherwise reads the opt-out from disk, so it works before [configure] (herald-fcm
+     * checks it before showing a Herald push). Cheap and safe from any thread.
      */
     @JvmStatic
-    fun setEnabled(enabled: Boolean) = submit { it.setEnabled(enabled) }
+    fun isEnabled(context: Context): Boolean = isEnabled { File(context.filesDir, StateStore.STORAGE_DIR) }
+
+    internal fun isEnabled(dir: () -> File): Boolean = enabledState ?: !StateStore.isDisabled(dir())
+
+    /**
+     * false stops all collection, sending and message display until set back to true. Persisted. Turning it off
+     * first sends one best-effort push unsubscribe for this device, so Herald stops sending it pushes (herald-fcm
+     * also stops showing them), and hides cached content cards until it is turned back on. Turning it back on
+     * re-sends the stored push token and a push `subscribed` when notifications are enabled.
+     */
+    @JvmStatic
+    fun setEnabled(enabled: Boolean) {
+        enabledState = enabled
+        submit { it.setEnabled(enabled) }
+    }
 
     /**
      * Deletes every piece of SDK data on the device, including queued events and cached cards, and disables the
@@ -230,7 +252,10 @@ object Herald {
      * Call `setEnabled(true)` to start again with a new device id.
      */
     @JvmStatic
-    fun wipeData() = submit { it.wipeData() }
+    fun wipeData() {
+        enabledState = false
+        submit { it.wipeData() }
+    }
 
     // Push
 

@@ -83,7 +83,7 @@ object HeraldNotifications {
         if (Herald.handleRemoteMessage(message.data)) return true
         val payload = payloadOf(message.data, message.notification) ?: return false
         // The app turned Herald off: its pushes are consumed but never shown.
-        if (HeraldPushPayload.isHeraldDisabled(context)) return true
+        if (!Herald.isEnabled(context)) return true
         try {
             val channel = message.data[KEY_CHANNEL_ID] ?: message.notification?.channelId
             show(context, payload, parseActions(message.data[KEY_ACTIONS]), channel)

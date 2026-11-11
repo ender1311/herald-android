@@ -109,6 +109,61 @@ class HeraldCoreTest {
         assertFalse(com.herald.sdk.internal.StateStore.isDisabled(h.dir))
     }
 
+    /** Fix round 1: re-enabling with a stored token and notifications enabled undoes the unsubscribe. */
+    @Test
+    fun reEnableResendsPushTokenAndSubscribed() {
+        core.identify("u1", emptyMap())
+        core.setUserToken("tok1")
+        core.setPushToken("fcm-token")
+        core.flush()
+        core.setEnabled(false)
+        val before = h.transport.batches.size
+
+        core.setEnabled(true)
+        core.flush()
+        assertEquals(before + 1, h.transport.batches.size)
+        val events = h.transport.batches.last().getJSONArray("events").let { a -> (0 until a.length()).map(a::getJSONObject) }
+        val token = events.indexOfFirst { it.getString("type") == "push_token" }
+        val subscription = events.indexOfFirst { it.getString("type") == "subscription" }
+        assertTrue("push_token first", token in 0 until subscription)
+        assertEquals("fcm-token", events[token].getString("token"))
+        assertEquals("push", events[subscription].getString("channel"))
+        assertEquals("subscribed", events[subscription].getString("state"))
+
+        core.setEnabled(true)
+        assertEquals("already enabled: nothing re-sent", 0, core.queue.size)
+    }
+
+    @Test
+    fun reEnableDoesNotRestorePushWithNotificationsOff() {
+        val denied = CoreHarness()
+        val core = denied.newCore(fixtureContext.copy(pushAuthorization = "denied"))
+        core.setPushToken("fcm-token")
+        core.flush()
+        core.setEnabled(false)
+        core.setEnabled(true)
+        core.flush()
+        val states = denied.transport.batches.flatMap { b ->
+            val a = b.getJSONArray("events"); (0 until a.length()).map { a.getJSONObject(it).optString("state") }
+        }
+        assertFalse(states.contains("subscribed"))
+    }
+
+    @Test
+    fun isEnabledFollowsCallsThenTheMarkerOnDisk() {
+        val dir = h.dir
+        try {
+            Herald.enabledState = null
+            assertTrue(Herald.isEnabled { dir })
+            core.setEnabled(false)
+            assertFalse("the marker on disk answers before any call", Herald.isEnabled { dir })
+            Herald.enabledState = true
+            assertTrue("the latest call wins", Herald.isEnabled { dir })
+        } finally {
+            Herald.enabledState = null
+        }
+    }
+
     @Test
     fun wipeDataSendsPushUnsubscribeUnderTheOldDeviceId() {
         core.setPushToken("fcm-token")

@@ -219,6 +219,7 @@ internal class HeraldCore(
     }
 
     fun setEnabled(enabled: Boolean) {
+        val wasEnabled = state.enabled
         if (!enabled) sendPushUnsubscribe()
         state.enabled = enabled
         state.save()
@@ -229,6 +230,18 @@ internal class HeraldCore(
         ensureDeviceId()
         state.messagesBody?.let(MessageParser::parse)?.let(::apply)
         if (foreground) onForeground() // start the session now, as iOS does
+        if (!wasEnabled) restorePushIfAuthorized()
+    }
+
+    /**
+     * Undoes the unsubscribe sent when the SDK was turned off: when the device still has its push token and
+     * notifications are enabled, queues the token and a `subscription push subscribed` for the next batch.
+     */
+    private fun restorePushIfAuthorized() {
+        val token = state.pushToken ?: return
+        if (contextProvider().pushAuthorization != "authorized") return
+        enqueuePushToken(token)
+        setSubscription(SubscriptionChannel.PUSH, SubscriptionState.SUBSCRIBED)
     }
 
     /**

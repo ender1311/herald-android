@@ -7,12 +7,12 @@ Releases follow the policy on [Versioning and support](https://beaconfrontier.co
 ### Added
 
 - `Herald.deepLinkHandler`: push, card and in-app links go to it first; return true when the app handled the link, otherwise the SDK opens it with ACTION_VIEW as before. Same semantics as iOS.
-- `HeraldPushPayload.isHeraldDisabled(context)`: whether the app turned the SDK off, read from disk.
+- `Herald.isEnabled(context)`: whether the SDK is on. Reflects `setEnabled` / `wipeData` at once and works before `configure` (it reads the saved opt-out). herald-fcm uses it.
 
 ### Fixed
 
 - Events recorded between `identify` and `setUserToken` are no longer lost. A 401 on a signed-in user's batch keeps it on the device, logs `Herald needs a user token: call setUserToken` once and holds that user's events until `setUserToken` is called, which sends them. Anonymous events keep flowing; the 1,000-event queue cap still applies.
-- `setEnabled(false)` and `wipeData()` first send one best-effort `subscription` push `unsubscribed` event for the device (only when it has a push token), so Herald stops sending it pushes. herald-fcm does not show Herald pushes while the SDK is disabled. Cached content cards are hidden while disabled and come back on `setEnabled(true)`.
+- `setEnabled(false)` and `wipeData()` first send one best-effort `subscription` push `unsubscribed` event for the device (only when it has a push token), so Herald stops sending it pushes. herald-fcm does not show Herald pushes while the SDK is disabled. Cached content cards are hidden while disabled and come back on `setEnabled(true)`, which also re-sends the stored push token and a push `subscribed` event when notifications are enabled, so pushes resume.
 - herald-ui: an in-app message that sets `backgroundColor` without `textColor` (or `buttonColor` without `buttonTextColor`) gets black or white text by WCAG contrast instead of the theme's text color, so it stays readable in dark mode.
 
 ## 0.2.1
