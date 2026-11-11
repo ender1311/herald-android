@@ -76,7 +76,7 @@ internal fun isImpression(visibleHeight: Float, fullHeight: Int) = fullHeight > 
 
 /**
  * The current user's content cards from [Herald.contentCards], pinned first then newest.
- * Impressions are logged once per card when at least half of it is visible; clicks are logged and then
+ * Impressions are logged once per card per session (across feeds and relaunches) when at least half of it is visible; clicks are logged and then
  * passed to [onCardClick]; dismissible cards can be swiped away (or dismissed with a TalkBack action),
  * which logs the dismissal.
  *

@@ -35,6 +35,8 @@ internal class StateStore(private val file: File) {
     val undeliveredIds: MutableList<String> = mutableListOf()
     /** Recently counted push opens (decision or message ids), oldest first. */
     val recentPushOpens: MutableList<String> = mutableListOf()
+    /** Cards whose impression this session already logged; cleared when a session starts. */
+    val impressedCardIds: MutableSet<String> = mutableSetOf()
 
     init {
         load()
@@ -58,6 +60,7 @@ internal class StateStore(private val file: File) {
             .put("lastShown", JSONObject(lastShown.toMap()))
             .put("undeliveredIds", JSONArray(undeliveredIds.toList()))
             .put("recentPushOpens", JSONArray(recentPushOpens.toList()))
+            .put("impressedCardIds", JSONArray(impressedCardIds.toList()))
         try {
             file.writeAtomically(json.toString())
         } catch (e: Exception) {
@@ -95,6 +98,7 @@ internal class StateStore(private val file: File) {
             json.arr("dismissedCardIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(dismissedCardIds::add) } }
             json.arr("undeliveredIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(undeliveredIds::add) } }
             json.arr("recentPushOpens")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(recentPushOpens::add) } }
+            json.arr("impressedCardIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(impressedCardIds::add) } }
             json.obj("lastShown")?.let { o -> o.keys().forEach { k -> o.num(k)?.let { lastShown[k] = it.toLong() } } }
         } catch (e: Exception) {
             HeraldLog.error("SDK state file unreadable; starting fresh", e)

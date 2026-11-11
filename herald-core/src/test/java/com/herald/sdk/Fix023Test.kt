@@ -44,4 +44,26 @@ class Fix023Test {
         assertEquals(0, requests)
         assertTrue(events().none { it.optString("state") == "subscribed" })
     }
+
+    private fun impressions() = events().filter { it.getString("type") == "interaction" && it.getString("action") == "impression" }
+        .map { it.getString("messageId") }
+
+    // D3: one impression per card per session, across feed rebuilds and relaunches; a new session logs again.
+    @Test
+    fun cardImpressionLoggedOncePerSession() {
+        core.debugLoadMessages(fixture("messages.json"))
+        val id = h.cards.value.first().id
+        core.logCardImpression(id)
+        core.logCardImpression(id) // a second feed, or a filter change
+        val relaunched = h.newCore()
+        relaunched.debugLoadMessages(fixture("messages.json"))
+        relaunched.logCardImpression(id)
+        relaunched.flush()
+        assertEquals(listOf(id), impressions())
+
+        h.clock.advance(31 * 60_000) // the session times out
+        relaunched.logCardImpression(id)
+        relaunched.flush()
+        assertEquals(listOf(id, id), impressions())
+    }
 }

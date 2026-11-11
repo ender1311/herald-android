@@ -63,7 +63,6 @@ internal class HeraldCore(
 
     /** Asks for the current push token again (herald-fcm fetches it and calls [setPushToken]). Set by the facade. */
     var requestPushToken: (() -> Unit)? = null
-    private val impressedThisSession = mutableSetOf<String>()
     private var clickedOnScreen = false
     private var foreground = false
     private var sessionTriggerDue = false
@@ -138,8 +137,8 @@ internal class HeraldCore(
         state.sessionId = now.toString()
         state.sessionStart = now
         state.lastActivity = now
+        state.impressedCardIds.clear()
         state.save()
-        impressedThisSession.clear()
         enqueueRaw("session_start", now) {}
         syncMessages()
         if (foreground) trigger(TriggerEvent(TriggerType.SESSION_START)) else sessionTriggerDue = true
@@ -216,7 +215,7 @@ internal class HeraldCore(
         // lastShown stays: display history is keyed per user and only wipeData clears it.
         state.undeliveredIds.clear()
         engine.messages = emptyList()
-        impressedThisSession.clear()
+        state.impressedCardIds.clear()
         contentCards.value = emptyList()
         if (engine.onScreen != null) {
             engine.markDismissed()
@@ -593,9 +592,15 @@ internal class HeraldCore(
 
     // region content cards
 
+    /** Logged once per card per session, however many feeds show it (persisted with the session), as on iOS. */
     fun logCardImpression(cardId: String) {
+        if (!state.enabled) return
         val card = updateCard(cardId) { it.copy(viewed = true) } ?: return
-        if (impressedThisSession.add(cardId)) logInteraction(card.id, "content_card", "impression", card.decisionId)
+        ensureSession(clock()) // a timed-out session ends first, clearing the set
+        if (cardId in state.impressedCardIds) return
+        logInteraction(card.id, "content_card", "impression", card.decisionId)
+        state.impressedCardIds.add(cardId)
+        state.save()
     }
 
     fun logCardClick(cardId: String) {
