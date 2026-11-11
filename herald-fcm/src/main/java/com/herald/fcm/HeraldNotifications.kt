@@ -73,7 +73,8 @@ object HeraldNotifications {
 
     /**
      * Shows [message] when it is a Herald push, or refreshes silently when it is a Herald sync push (see
-     * `Herald.handleRemoteMessage`). Returns false for other pushes, so a custom
+     * `Herald.handleRemoteMessage`). While the app has turned Herald off (`Herald.setEnabled(false)` or
+     * `wipeData()`), Herald pushes are consumed and not shown. Returns false for other pushes, so a custom
      * FirebaseMessagingService can pass them on. Blocks while the image downloads (up to a few seconds);
      * FCM calls `onMessageReceived` off the main thread.
      */
@@ -81,6 +82,8 @@ object HeraldNotifications {
     fun handleRemoteMessage(context: Context, message: RemoteMessage): Boolean {
         if (Herald.handleRemoteMessage(message.data)) return true
         val payload = payloadOf(message.data, message.notification) ?: return false
+        // The app turned Herald off: its pushes are consumed but never shown.
+        if (HeraldPushPayload.isHeraldDisabled(context)) return true
         try {
             val channel = message.data[KEY_CHANNEL_ID] ?: message.notification?.channelId
             show(context, payload, parseActions(message.data[KEY_ACTIONS]), channel)

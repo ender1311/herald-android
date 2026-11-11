@@ -73,5 +73,6 @@ internal class CoreHarness(
         random = Random(42),
         newId = { ids.next() },
         mainDispatcher = mainDispatcher,
+        background = { it() },
     )
 }

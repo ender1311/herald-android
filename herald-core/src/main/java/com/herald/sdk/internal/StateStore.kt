@@ -69,6 +69,15 @@ internal class StateStore(private val file: File) {
         file.delete()
     }
 
+    companion object {
+        /** SDK files live in `filesDir/herald`. */
+        const val STORAGE_DIR = "herald"
+        const val FILE_NAME = "herald_state.json"
+
+        /** Whether the SDK in [dir] is disabled, read straight from the marker file (no state load). */
+        fun isDisabled(dir: File): Boolean = File(dir, "$FILE_NAME.disabled").exists()
+    }
+
     private fun load() {
         if (!file.exists()) return
         try {

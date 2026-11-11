@@ -76,6 +76,51 @@ class HeraldCoreTest {
         assertTrue(core.queue.peekBatch(1000).all { it.userId == "u1" })
     }
 
+    /** I3: disabling sends one push unsubscribe for this device and hides cached cards until re-enabled. */
+    @Test
+    fun disableSendsPushUnsubscribeAndHidesCards() {
+        core.identify("u1", emptyMap())
+        core.setUserToken("tok1")
+        core.setPushToken("fcm-token")
+        core.flush()
+        assertTrue(h.cards.value.isNotEmpty())
+        val before = h.transport.batches.size
+
+        core.setEnabled(false)
+        assertEquals("one best-effort batch", before + 1, h.transport.batches.size)
+        val request = h.transport.requests.last { it.method == "POST" }
+        assertEquals("tok1", request.headers["x-herald-user-token"])
+        val batch = h.transport.batches.last()
+        assertEquals("u1", batch.getString("userId"))
+        val event = batch.getJSONArray("events").getJSONObject(0)
+        assertEquals(1, batch.getJSONArray("events").length())
+        assertEquals("subscription", event.getString("type"))
+        assertEquals("push", event.getString("channel"))
+        assertEquals("unsubscribed", event.getString("state"))
+        assertTrue("cards are hidden while disabled", h.cards.value.isEmpty())
+        assertEquals("the unsubscribe is never queued", 0, core.queue.size)
+        assertTrue(com.herald.sdk.internal.StateStore.isDisabled(h.dir))
+
+        core.setEnabled(false)
+        assertEquals("already disabled: nothing more", before + 1, h.transport.batches.size)
+
+        core.setEnabled(true)
+        assertTrue("cards come back on re-enable", h.cards.value.isNotEmpty())
+        assertFalse(com.herald.sdk.internal.StateStore.isDisabled(h.dir))
+    }
+
+    @Test
+    fun wipeDataSendsPushUnsubscribeUnderTheOldDeviceId() {
+        core.setPushToken("fcm-token")
+        core.flush()
+        val oldDevice = core.deviceId
+        core.wipeData()
+        val batch = h.transport.batches.last()
+        assertEquals(oldDevice, batch.getString("deviceId"))
+        assertEquals("unsubscribed", batch.getJSONArray("events").getJSONObject(0).getString("state"))
+        assertTrue(h.cards.value.isEmpty())
+    }
+
     @Test
     fun dropsASingleOversizeEventLocallyWithoutSending() {
         core.track("big", mapOf("blob" to "x".repeat(520 * 1024)))

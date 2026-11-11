@@ -17,6 +17,7 @@ import com.herald.sdk.internal.HeraldLog
 import com.herald.sdk.internal.HttpUrlConnectionTransport
 import com.herald.sdk.internal.PendingCalls
 import com.herald.sdk.internal.PushPermissionRequest
+import com.herald.sdk.internal.StateStore
 import com.herald.sdk.push.HeraldPushPayload
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -116,7 +117,7 @@ object Herald {
                     newScope.launch {
                         val deviceContext = AndroidDeviceContext(app)
                         core = HeraldCore(
-                            dir = app.filesDir.resolve("herald"),
+                            dir = app.filesDir.resolve(StateStore.STORAGE_DIR),
                             appKey = appKey,
                             endpoint = endpoint,
                             options = options,
@@ -207,12 +208,17 @@ object Herald {
     @JvmStatic
     fun flush() = submit { it.flush() }
 
-    /** false stops all collection and sending until set back to true. Persisted. */
+    /**
+     * false stops all collection, sending and message display until set back to true. Persisted. Turning it off
+     * first sends one best-effort push unsubscribe for this device, so Herald stops sending it pushes (herald-fcm
+     * also stops showing them), and hides cached content cards until it is turned back on.
+     */
     @JvmStatic
     fun setEnabled(enabled: Boolean) = submit { it.setEnabled(enabled) }
 
     /**
-     * Deletes every piece of SDK data on the device, including queued events, and disables the SDK.
+     * Deletes every piece of SDK data on the device, including queued events and cached cards, and disables the
+     * SDK. First sends one best-effort push unsubscribe for this device, as `setEnabled(false)` does.
      * Call `setEnabled(true)` to start again with a new device id.
      */
     @JvmStatic

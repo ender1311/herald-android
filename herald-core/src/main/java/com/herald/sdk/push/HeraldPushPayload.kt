@@ -1,6 +1,9 @@
 package com.herald.sdk.push
 
+import android.content.Context
 import android.content.Intent
+import com.herald.sdk.internal.StateStore
+import java.io.File
 
 /**
  * The Herald fields of an FCM data message, and the extras a notification tap intent carries.
@@ -33,6 +36,14 @@ data class HeraldPushPayload(
 
         /** Data key of a Herald sync push (value "1"): a silent refresh, never shown or logged as an open. */
         const val KEY_SYNC = "herald_sync"
+
+        /**
+         * True when the app turned Herald off on this device (`setEnabled(false)` or `wipeData()`). Read from disk,
+         * so it also works before `configure` finishes. herald-fcm does not show Herald pushes then.
+         */
+        @JvmStatic
+        fun isHeraldDisabled(context: Context): Boolean =
+            StateStore.isDisabled(File(context.filesDir, StateStore.STORAGE_DIR))
 
         /** True when an FCM data message is a Herald sync push. */
         fun isSync(data: Map<String, String>): Boolean = data[KEY_SYNC] == "1"

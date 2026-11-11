@@ -16,6 +16,7 @@ import org.json.JSONObject
 import java.io.File
 import java.net.URLEncoder
 import java.util.UUID
+import kotlin.concurrent.thread
 import kotlin.random.Random
 
 /**
@@ -37,9 +38,11 @@ internal class HeraldCore(
     private val newId: () -> String = { UUID.randomUUID().toString() },
     /** Where the in-app delegate is called (the main thread in the app); null calls it inline. */
     private val mainDispatcher: CoroutineDispatcher? = null,
+    /** Runs the one-off push unsubscribe off the SDK thread; tests run it inline. */
+    private val background: (() -> Unit) -> Unit = { work -> thread(isDaemon = true, name = "herald-unsubscribe") { work() } },
 ) {
     private val endpoint = endpoint.trimEnd('/')
-    private val state = StateStore(File(dir, "herald_state.json"))
+    private val state = StateStore(File(dir, StateStore.FILE_NAME))
     val queue = EventQueue(File(dir, "herald_queue.json"), QUEUE_CAP)
     val engine = InAppEngine(clock, options.inAppMinimumIntervalSeconds * 1000, state.lastShown) {
         state.userId ?: InAppEngine.ANONYMOUS
@@ -216,11 +219,48 @@ internal class HeraldCore(
     }
 
     fun setEnabled(enabled: Boolean) {
+        if (!enabled) sendPushUnsubscribe()
         state.enabled = enabled
         state.save()
-        if (!enabled) return
+        if (!enabled) {
+            contentCards.value = emptyList() // hidden until enabled again
+            return
+        }
         ensureDeviceId()
+        state.messagesBody?.let(MessageParser::parse)?.let(::apply)
         if (foreground) onForeground() // start the session now, as iOS does
+    }
+
+    /**
+     * Before the SDK goes quiet, tells Herald to stop pushing to this device: one `subscription push
+     * unsubscribed` batch, sent once off the SDK thread and never queued or retried (best effort).
+     */
+    private fun sendPushUnsubscribe() {
+        if (!state.enabled || state.pushToken == null) return
+        val now = clock()
+        val event = JSONObject()
+            .put("id", newId())
+            .put("type", "subscription")
+            .put("timestamp", isoTimestamp(now))
+            .put("sessionId", state.sessionId)
+            .put("channel", SubscriptionChannel.PUSH.wire)
+            .put("state", SubscriptionState.UNSUBSCRIBED.wire)
+        val uid = state.userId
+        // Built now: wipeData() forgets the device id and token right after this returns.
+        val body = encodeBatch(listOf(QueuedEvent(uid, state.userToken, event)), 0)
+        val headers = buildMap {
+            put("Content-Type", "application/json")
+            put("x-herald-app-key", appKey)
+            if (uid != null) state.userToken?.let { put("x-herald-user-token", it) }
+        }
+        val request = HttpRequest("POST", "$endpoint/api/v1/sdk/batch", headers, body)
+        background {
+            try {
+                transport.execute(request)
+            } catch (e: Exception) {
+                HeraldLog.info("Push unsubscribe not sent (${e.javaClass.simpleName})")
+            }
+        }
     }
 
     /** A disabled SDK after [wipeData] keeps no device id on disk; a new one is made when it is enabled again. */
@@ -235,6 +275,7 @@ internal class HeraldCore(
      * usually means consent was withdrawn), as on iOS. Re-enabling starts with a new device id.
      */
     fun wipeData() {
+        sendPushUnsubscribe()
         state.sessionId = null // no session_end: everything is being deleted
         queue.clear()
         clearUserState()
@@ -507,7 +548,8 @@ internal class HeraldCore(
 
     private fun apply(payload: MessagesPayload) {
         val now = clock()
-        contentCards.value = payload.contentCards.filter {
+        // Cached cards stay hidden while the SDK is disabled.
+        contentCards.value = if (!state.enabled) emptyList() else payload.contentCards.filter {
             !it.dismissed && it.id !in state.dismissedCardIds && (it.expiresAt == null || it.expiresAt > now)
         }
         engine.messages = payload.inAppMessages
