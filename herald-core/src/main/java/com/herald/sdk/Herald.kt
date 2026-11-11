@@ -64,6 +64,14 @@ object Herald {
             if (value != null) submit { it.showPendingIfPossible() } // re-offer pending messages, as on iOS
         }
 
+    /**
+     * Opens Herald deep links: push taps, card clicks and in-app button and body clicks. Return true when the app
+     * handled the link; when null or returning false, the SDK opens it with ACTION_VIEW. Called on the thread that
+     * opens the link, the main thread for taps and clicks.
+     */
+    @Volatile
+    var deepLinkHandler: ((String) -> Boolean)? = null
+
     private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
     @Volatile
     private var scope: CoroutineScope? = null
@@ -362,10 +370,14 @@ object Herald {
     @JvmStatic
     fun debugShowInAppMessage(messageId: String) = submit { it.debugShowInAppMessage(messageId) }
 
-    /** Opens a deep link or URL with ACTION_VIEW. Presenters use it for button and click actions. */
+    /**
+     * Routes a deep link or URL through [deepLinkHandler], falling back to ACTION_VIEW. Presenters use it for
+     * button and click actions.
+     */
     @JvmStatic
     fun openUrl(url: String) {
         guard("openUrl") {
+            if (deepLinkHandler?.invoke(url) == true) return@guard
             val context = appContext ?: return@guard
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }

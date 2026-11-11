@@ -53,7 +53,7 @@ object ContentCardFeedDefaults {
     val Order: Comparator<ContentCard> =
         compareByDescending<ContentCard> { it.pinned }.thenByDescending { it.createdAt }
 
-    /** Opens the card's url or deep link with ACTION_VIEW. */
+    /** Opens the card's url or deep link with `Herald.openUrl` (the deep-link handler, then ACTION_VIEW). */
     val OpenUrl: (ContentCard) -> Unit = { card -> card.url?.let(Herald::openUrl) }
 
     /** Default card for [card], chosen by its type. */
