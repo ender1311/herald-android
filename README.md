@@ -49,7 +49,7 @@ Herald.track("workout_completed", mapOf("minutes" to 32))
 // In a composable: ContentCardFeed()
 ```
 
-The full guide, including push setup, is at https://beaconfrontier.com/herald/docs.
+The full guide, including push setup, is at https://heraldsdk.com/docs.
 
 ## License
 
