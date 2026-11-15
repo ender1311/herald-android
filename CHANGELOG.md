@@ -2,6 +2,12 @@
 
 Releases follow the policy on [Versioning and support](https://heraldsdk.com/docs/operations/versioning-and-support). iOS and Android share version numbers.
 
+## 0.3.0
+
+### Changed
+
+- No Android changes. The version moves with iOS, which adds Live Activities in 0.3.0.
+
 ## 0.2.3
 
 ### Added
