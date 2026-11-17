@@ -18,6 +18,7 @@ import com.herald.sdk.internal.HttpUrlConnectionTransport
 import com.herald.sdk.internal.PendingCalls
 import com.herald.sdk.internal.PushPermissionRequest
 import com.herald.sdk.internal.StateStore
+import com.herald.sdk.internal.TapToken
 import com.herald.sdk.push.HeraldPushPayload
 import com.herald.sdk.push.PushTokenSource
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -295,14 +296,19 @@ object Herald {
     /**
      * Call from the activity that receives notification taps (`onCreate` and `onNewIntent`).
      * Logs the open, evaluates `push_open` in-app triggers and opens the deep link.
-     * Returns true when the intent came from a Herald notification.
+     * Returns true when the intent came from a Herald notification: it must carry this install's tap token,
+     * which herald-fcm (and [HeraldPushPayload.putInto]) adds, so an intent another app sends is ignored.
      */
     @JvmStatic
     fun handleNotificationIntent(intent: Intent?): Boolean = try {
         val payload = HeraldPushPayload.fromIntent(intent)
         if (payload == null) {
             false
+        } else if (!isTrustedTap(intent?.getStringExtra(HeraldPushPayload.KEY_TAP_TOKEN))) {
+            HeraldLog.warn("Ignored a notification intent without this app's Herald tap token")
+            false
         } else {
+            intent?.removeExtra(HeraldPushPayload.KEY_TAP_TOKEN)
             // Remove the extras so a re-delivered intent (rotation, recreation) is not counted twice.
             intent?.removeExtra(HeraldPushPayload.KEY_DECISION_ID)
             intent?.removeExtra(HeraldPushPayload.KEY_MESSAGE_ID)
@@ -352,6 +358,20 @@ object Herald {
 
     /** FCM gives `onMessageReceived` about 10 s; [handleRemoteMessage] waits for the refresh at most this long. */
     private const val SYNC_PUSH_WAIT_MS = 8_000L
+
+    /** Where the tap token lives: no-backup storage, so a restored backup never carries it to another device. */
+    private fun tapTokenDir(context: Context) = context.noBackupFilesDir.resolve(StateStore.STORAGE_DIR)
+
+    /** This install's notification tap token, or null before [configure] when no [context] is given. */
+    internal fun tapToken(context: Context? = null): String? {
+        val ctx = context?.applicationContext ?: appContext ?: return null
+        return TapToken.get(tapTokenDir(ctx))
+    }
+
+    private fun isTrustedTap(presented: String?): Boolean {
+        val ctx = appContext ?: return false
+        return TapToken.matches(tapTokenDir(ctx), presented)
+    }
 
     /** Action-button taps do not auto-cancel a notification, so clear the one the tap came from. */
     private fun cancelNotification(intent: Intent?) {

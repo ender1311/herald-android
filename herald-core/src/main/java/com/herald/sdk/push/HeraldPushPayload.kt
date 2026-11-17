@@ -1,6 +1,8 @@
 package com.herald.sdk.push
 
+import android.content.Context
 import android.content.Intent
+import com.herald.sdk.Herald
 
 /**
  * The Herald fields of an FCM data message, and the extras a notification tap intent carries.
@@ -15,11 +17,17 @@ data class HeraldPushPayload(
     val body: String?,
     val imageUrl: String?,
 ) {
-    /** Copies the Herald fields into [intent] as string extras. */
-    fun putInto(intent: Intent): Intent = intent.apply {
+    /**
+     * Copies the Herald fields into [intent] as string extras, plus this install's tap token, which
+     * [com.herald.sdk.Herald.handleNotificationIntent] requires. The token comes from [context], or from the
+     * context passed to `Herald.configure` when [context] is null; with neither, the tap will be ignored.
+     */
+    @JvmOverloads
+    fun putInto(intent: Intent, context: Context? = null): Intent = intent.apply {
         decisionId?.let { putExtra(KEY_DECISION_ID, it) }
         messageId?.let { putExtra(KEY_MESSAGE_ID, it) }
         deeplink?.let { putExtra(KEY_DEEPLINK, it) }
+        Herald.tapToken(context)?.let { putExtra(KEY_TAP_TOKEN, it) }
     }
 
     companion object {
@@ -42,6 +50,9 @@ data class HeraldPushPayload(
 
         /** Intent extra with the id of the notification action button the user tapped. */
         const val KEY_ACTION_ID = "herald_action_id"
+
+        /** Intent extra with this install's tap token: proof the intent came from a Herald notification. */
+        const val KEY_TAP_TOKEN = "herald_tap_token"
 
         /** Tag herald-fcm posts its notifications under. */
         const val NOTIFICATION_TAG = "herald"

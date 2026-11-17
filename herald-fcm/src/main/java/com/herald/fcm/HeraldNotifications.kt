@@ -156,7 +156,7 @@ object HeraldNotifications {
     ): PendingIntent? {
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return null
         launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        payload.putInto(launch).putExtra(HeraldPushPayload.KEY_NOTIFICATION_ID, notificationId)
+        payload.putInto(launch, context).putExtra(HeraldPushPayload.KEY_NOTIFICATION_ID, notificationId)
         actionId?.let { launch.putExtra(HeraldPushPayload.KEY_ACTION_ID, it) }
         return PendingIntent.getActivity(
             context,
