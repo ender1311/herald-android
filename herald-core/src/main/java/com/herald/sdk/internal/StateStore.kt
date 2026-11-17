@@ -1,5 +1,6 @@
 package com.herald.sdk.internal
 
+import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -79,9 +80,35 @@ internal class StateStore(private val file: File) {
     }
 
     companion object {
-        /** SDK files live in `filesDir/herald`. */
+        /** SDK files live in `noBackupFilesDir/herald`, which Android Auto Backup never copies. */
         const val STORAGE_DIR = "herald"
         const val FILE_NAME = "herald_state.json"
+
+        /**
+         * The SDK's storage directory. SDK 0.4.0 and earlier kept it in `filesDir/herald`, which Auto Backup copies
+         * (device ID, user token, queued events) to a new phone; the first call moves it out of there.
+         */
+        fun storageDir(context: Context): File =
+            moveLegacy(context.filesDir.resolve(STORAGE_DIR), context.noBackupFilesDir.resolve(STORAGE_DIR))
+
+        /** Moves [legacy] to [target] when only [legacy] exists, drops a stale [legacy] otherwise; returns [target]. */
+        internal fun moveLegacy(legacy: File, target: File): File = synchronized(this) {
+            if (!legacy.exists()) return target
+            if (target.exists()) {
+                legacy.deleteRecursively()
+                return target
+            }
+            target.parentFile?.mkdirs()
+            val moved = legacy.renameTo(target) || runCatching { legacy.copyRecursively(target, overwrite = true) }.getOrDefault(false)
+            if (moved) {
+                legacy.deleteRecursively()
+            } else {
+                target.deleteRecursively() // a partial copy; the next launch tries again
+                HeraldLog.warn("Could not move SDK storage out of the backed-up files directory")
+                return legacy
+            }
+            target
+        }
 
         /** Whether the SDK in [dir] is disabled, read straight from the marker file (no state load). */
         fun isDisabled(dir: File): Boolean = File(dir, "$FILE_NAME.disabled").exists()

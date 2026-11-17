@@ -131,7 +131,7 @@ object Herald {
                     newScope.launch {
                         val deviceContext = AndroidDeviceContext(app)
                         core = HeraldCore(
-                            dir = app.filesDir.resolve(StateStore.STORAGE_DIR),
+                            dir = StateStore.storageDir(app),
                             appKey = appKey,
                             endpoint = endpoint,
                             options = options,
@@ -237,7 +237,7 @@ object Herald {
      * checks it before showing a Herald push). Cheap and safe from any thread.
      */
     @JvmStatic
-    fun isEnabled(context: Context): Boolean = isEnabled { File(context.filesDir, StateStore.STORAGE_DIR) }
+    fun isEnabled(context: Context): Boolean = isEnabled { StateStore.storageDir(context) }
 
     internal fun isEnabled(dir: () -> File): Boolean = enabledState ?: !StateStore.isDisabled(dir())
 
@@ -359,8 +359,8 @@ object Herald {
     /** FCM gives `onMessageReceived` about 10 s; [handleRemoteMessage] waits for the refresh at most this long. */
     private const val SYNC_PUSH_WAIT_MS = 8_000L
 
-    /** Where the tap token lives: no-backup storage, so a restored backup never carries it to another device. */
-    private fun tapTokenDir(context: Context) = context.noBackupFilesDir.resolve(StateStore.STORAGE_DIR)
+    /** The tap token lives with the SDK's other files, out of Auto Backup, so a restore never carries it to another device. */
+    private fun tapTokenDir(context: Context) = StateStore.storageDir(context)
 
     /** This install's notification tap token, or null before [configure] when no [context] is given. */
     internal fun tapToken(context: Context? = null): String? {

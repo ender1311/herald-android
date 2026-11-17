@@ -64,7 +64,7 @@ internal class AndroidDeviceContext(context: Context) {
     companion object {
         /** Written when `Herald.requestPushAuthorization` shows the Android 13+ prompt. Kept by `wipeData()`. */
         fun pushPermissionMarker(context: Context) =
-            File(context.filesDir.resolve(StateStore.STORAGE_DIR), "push_permission_requested")
+            File(StateStore.storageDir(context), "push_permission_requested")
 
         /**
          * iOS value names. Android 13+: `not_determined` until the permission has been requested, then
