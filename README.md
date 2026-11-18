@@ -28,9 +28,9 @@ Then the modules:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.ender1311.herald-android:herald-core:0.4.0")
-    implementation("com.github.ender1311.herald-android:herald-ui:0.4.0")
-    implementation("com.github.ender1311.herald-android:herald-fcm:0.4.0")
+    implementation("com.github.ender1311.herald-android:herald-core:0.5.0")
+    implementation("com.github.ender1311.herald-android:herald-ui:0.5.0")
+    implementation("com.github.ender1311.herald-android:herald-fcm:0.5.0")
 }
 ```
 
