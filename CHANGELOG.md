@@ -2,6 +2,12 @@
 
 Releases follow the policy on [Versioning and support](https://heraldsdk.com/docs/operations/versioning-and-support). iOS and Android share version numbers.
 
+## 0.5.0
+
+### Changed
+
+- No Android changes. The version moves with iOS, which adds the build kind to device context and `flush(timeout:)` in 0.5.0.
+
 ## 0.4.0
 
 ### Changed
