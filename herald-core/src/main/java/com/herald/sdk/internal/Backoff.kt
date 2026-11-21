@@ -32,4 +32,14 @@ internal object Backoff {
         val body = runCatching { org.json.JSONObject(response.body).num("retryAfterSeconds")?.toDouble() }.getOrNull()
         return body?.takeIf { it >= 0 }?.let { min(ceil(it).toLong(), MAX_RETRY_AFTER_SECONDS) }
     }
+
+    /** The `rejected` entries of an accepted batch's response, as log lines. The server kept the rest of the batch,
+     *  and a rejected event is never retried. */
+    fun rejectedEvents(body: String): List<String> {
+        val list = runCatching { org.json.JSONObject(body).obj("data")?.arr("rejected") }.getOrNull() ?: return emptyList()
+        return (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { r ->
+            val id = r.str("id") ?: "#${r.num("index")?.toInt() ?: 0}"
+            "$id: ${r.str("reason") ?: "?"} (${r.str("detail") ?: ""})"
+        }
+    }
 }

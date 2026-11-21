@@ -1,5 +1,6 @@
 package com.herald.sdk
 
+import com.herald.sdk.internal.Backoff
 import com.herald.sdk.internal.HttpResponse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -36,6 +37,21 @@ class HeraldCoreTest {
             assertEquals("status $code", 0, core.queue.size)
             assertEquals(0L, core.nextAttemptAt)
         }
+    }
+
+    @Test
+    fun acceptedBatchWithRejectedEventsIsClearedAndNotRetried() {
+        val body = fixture("batch-rejected.json")
+        h.transport.batchResponse = { HttpResponse(200, emptyMap(), body) }
+        core.track("a", emptyMap())
+        core.track("b", emptyMap())
+        core.flush()
+        assertEquals("the whole batch leaves the queue", 0, core.queue.size)
+        assertEquals(0L, core.nextAttemptAt)
+        core.flush()
+        assertEquals("nothing is resent", 1, h.transport.batches.size)
+        assertEquals(listOf("e2: too_old (timestamp is more than 30 days old)"), Backoff.rejectedEvents(body))
+        assertEquals(emptyList<String>(), Backoff.rejectedEvents("""{"data":{"accepted":2,"duplicates":0}}"""))
     }
 
     /** I1: a 401 on an identified batch keeps it until setUserToken, which sends it with the token. */

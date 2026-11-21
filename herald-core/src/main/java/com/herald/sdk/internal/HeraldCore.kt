@@ -498,6 +498,7 @@ internal class HeraldCore(
                     nextAttemptAt = 0
                     queue.remove(batch, dropped)
                     HeraldLog.debug("Sent ${batch.size} events")
+                    Backoff.rejectedEvents(response.body).forEach { HeraldLog.debug("Herald rejected event $it") }
                 }
                 408, 429, in 500..599 -> {
                     HeraldLog.info("Batch send got ${response.status}; will retry")

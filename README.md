@@ -49,6 +49,8 @@ Herald.track("workout_completed", mapOf("minutes" to 32))
 // In a composable: ContentCardFeed()
 ```
 
+Herald checks each event on its own: an event it can't accept is left out of an otherwise accepted batch, logged at debug level with its reason (`Herald rejected event <id>: <reason> (<detail>)`) and never retried. The console lists rejected events on the SDK connection's page. Event times are corrected for the device's clock on the server.
+
 The full guide, including push setup, is at https://heraldsdk.com/docs.
 
 ## Support ID
