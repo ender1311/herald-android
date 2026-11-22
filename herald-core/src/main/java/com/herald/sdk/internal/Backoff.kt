@@ -38,7 +38,7 @@ internal object Backoff {
     fun rejectedEvents(body: String): List<String> {
         val list = runCatching { org.json.JSONObject(body).obj("data")?.arr("rejected") }.getOrNull() ?: return emptyList()
         return (0 until list.length()).mapNotNull { list.optJSONObject(it) }.map { r ->
-            val id = r.str("id") ?: "#${r.num("index")?.toInt() ?: 0}"
+            val id = r.str("id") ?: "#${r.num("index")?.toInt() ?: -1}"
             "$id: ${r.str("reason") ?: "?"} (${r.str("detail") ?: ""})"
         }
     }

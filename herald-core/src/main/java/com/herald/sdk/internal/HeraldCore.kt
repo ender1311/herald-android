@@ -427,6 +427,12 @@ internal class HeraldCore(
             .put("timestamp", isoTimestamp(now))
             .put("sessionId", state.sessionId)
         event.fields()
+        if (event.toString().toByteArray().size > MAX_EVENT_BYTES) {
+            // Herald rejects a single event over 32 KB of JSON, so it is dropped here and counted in `dropped`.
+            HeraldLog.debug("Dropping a $type event larger than ${MAX_EVENT_BYTES / 1024} KB")
+            queue.countDropped()
+            return
+        }
         queue.add(QueuedEvent(state.userId, state.userToken, event))
         state.lastActivity = now
         if (queue.size >= options.flushAt) flush()
@@ -885,6 +891,7 @@ internal class HeraldCore(
         const val QUEUE_CAP = 1000
         const val MAX_BATCH_EVENTS = 100
         const val MAX_BATCH_BYTES = 512 * 1024
+        const val MAX_EVENT_BYTES = 32 * 1024
         const val MAX_RECENT_OPENS = 50
         const val SYNC_PUSH_DEBOUNCE_MS = 30_000L
     }

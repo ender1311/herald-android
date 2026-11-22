@@ -219,6 +219,16 @@ class HeraldCoreTest {
     }
 
     @Test
+    fun dropsAnEventOver32KBBeforeQueueingAndCountsIt() {
+        core.track("small", emptyMap())
+        core.track("big", mapOf("blob" to "x".repeat(33 * 1024)))
+        assertEquals("session_start + small; big never queued", 2, core.queue.size)
+        assertEquals(1, core.queue.dropped)
+        core.flush()
+        assertEquals(1, h.transport.batches.first().getInt("dropped"))
+    }
+
+    @Test
     fun retries429WithRetryAfterAndKeepsEvents() {
         h.transport.batchResponse = status(429, mapOf("Retry-After" to "30"))
         core.track("a", emptyMap())

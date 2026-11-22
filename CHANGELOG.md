@@ -14,11 +14,12 @@ Releases follow the policy on [Versioning and support](https://heraldsdk.com/doc
 
 ### Changed
 
+- Events over 32 KB of JSON are dropped before they are queued, logged at debug level and counted in `dropped` (Herald would reject them).
 - Partial rejects: when Herald accepts a batch but lists events it couldn't accept in `rejected`, the batch leaves the queue as before, each rejected event is logged at debug level with its reason, and none is retried. A 400 from an older server still drops the batch. (iOS also adds the build kind to device context and `flush(timeout:)` in 0.5.0.)
 
 ### Changed in Herald (server, every SDK version)
 
-- Per-event validation: each event in a batch is checked on its own. An invalid event (unknown type, missing or invalid field, over 32 KB, or more than 30 days old) is rejected and listed in the response's `rejected`; the rest of the batch is kept. Before, one bad event failed the whole batch with a 400 and the SDK dropped all of it. The console lists rejected events on the SDK connection's page for 30 days.
+- Per-event validation: each event in a batch is checked on its own. An invalid event (unknown type, missing or invalid field, over 32 KB, or more than 30 days old) is rejected and listed in the response's `rejected`; the rest of the batch is kept. Before, one bad event failed the whole batch with a 400 and the SDK dropped all of it. The console lists rejected events on the connection's page for 30 days.
 - Clock correction: event times are corrected for the device's clock using the batch's `sentAt` and the time it arrived, so a phone with a wrong clock no longer puts activity, send times or goal credit in the wrong window. The device's own timestamp is kept.
 
 ## 0.4.0

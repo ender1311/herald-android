@@ -22,6 +22,12 @@ internal class EventQueue(private val file: File, private val cap: Int = 1000) {
         load()
     }
 
+    /** Counts an event dropped before it was queued (reported in [dropped] like an overflow). */
+    fun countDropped() {
+        dropped++
+        persist()
+    }
+
     fun add(entry: QueuedEvent) {
         entries.addLast(entry)
         while (entries.size > cap) {
