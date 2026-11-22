@@ -20,6 +20,7 @@ internal class RemoteConfig(val version: String, private val settings: JSONObjec
             else -> local.deviceDataCollection
         },
         trackLifecycleEvents = settings.bool("trackLifecycleEvents") ?: local.trackLifecycleEvents,
+        trackExternalPushes = settings.bool("trackExternalPushes") ?: local.trackExternalPushes,
         trackDeepLinks = settings.bool("trackDeepLinks") ?: local.trackDeepLinks,
     )
 

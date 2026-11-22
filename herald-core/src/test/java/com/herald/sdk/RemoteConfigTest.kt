@@ -40,13 +40,14 @@ class RemoteConfigTest {
     fun remoteValuesOverrideAndAbsentOnesFallBack() {
         val h = CoreHarness(options = HeraldOptions(trackLifecycleEvents = false, flushIntervalSeconds = 15))
         h.transport.configResponse = {
-            HttpResponse(200, emptyMap(), body("v2", """{"foregroundSessionTimeoutSeconds":120,"trackDeepLinks":false,"flushIntervalSeconds":"x"}"""))
+            HttpResponse(200, emptyMap(), body("v2", """{"foregroundSessionTimeoutSeconds":120,"trackDeepLinks":false,"trackExternalPushes":false,"flushIntervalSeconds":"x"}"""))
         }
         var version: String? = null
         val core = h.newCore(onRemoteConfigVersion = { version = it })
         core.fetchConfig()
         assertEquals(2L, core.options.foregroundTimeoutMinutes)
         assertFalse(core.options.trackDeepLinks)
+        assertFalse(core.options.trackExternalPushes)
         assertEquals("a mistyped value keeps the app's", 15L, core.options.flushIntervalSeconds)
         assertEquals(30L, core.options.backgroundTimeoutMinutes)
         assertEquals("v2", version)
