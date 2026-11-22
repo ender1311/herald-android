@@ -53,6 +53,8 @@ internal class StateStore(private val file: File) {
     var lastSessionId: String? = null
     /** The app went to the background and hasn't come back: sessions time out after the background timeout. */
     var inBackground = false
+    /** The app's `setConsent` record (`basis`, `documentId`, `documentVersion`, `recordedAt`), sent in each batch's context. */
+    var consent: JSONObject? = null
 
     init {
         load()
@@ -84,6 +86,7 @@ internal class StateStore(private val file: File) {
             .put("sessionIndex", sessionIndex)
             .putOpt("lastSessionId", lastSessionId)
             .put("inBackground", inBackground)
+            .putOpt("consent", consent)
         try {
             file.writeAtomically(json.toString())
         } catch (e: Exception) {
@@ -151,6 +154,7 @@ internal class StateStore(private val file: File) {
             sessionIndex = json.num("sessionIndex")?.toLong() ?: 0
             lastSessionId = json.str("lastSessionId")
             inBackground = json.optBoolean("inBackground", false)
+            consent = json.obj("consent")
             json.arr("dismissedCardIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(dismissedCardIds::add) } }
             json.arr("undeliveredIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(undeliveredIds::add) } }
             json.arr("recentPushOpens")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(recentPushOpens::add) } }

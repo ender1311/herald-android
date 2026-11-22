@@ -45,6 +45,16 @@ data class HeraldOptions(
 /** The kind of push your app sent itself, reported with [Herald.trackExternalPush]. */
 enum class ExternalPushCategory(internal val wire: String) { TRANSACTIONAL("transactional"), MARKETING("marketing"), OTHER("other") }
 
+/** The GDPR lawful basis recorded with [Herald.setConsent]. */
+enum class ConsentBasis(internal val wire: String) {
+    CONSENT("consent"),
+    CONTRACT("contract"),
+    LEGAL_OBLIGATION("legal_obligation"),
+    VITAL_INTERESTS("vital_interests"),
+    PUBLIC_TASK("public_task"),
+    LEGITIMATE_INTERESTS("legitimate_interests"),
+}
+
 enum class SubscriptionChannel(internal val wire: String) { PUSH("push"), EMAIL("email"), SMS("sms") }
 
 enum class SubscriptionState(internal val wire: String) {

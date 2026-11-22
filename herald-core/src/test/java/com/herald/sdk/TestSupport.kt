@@ -35,12 +35,20 @@ internal class FakeTransport : Transport {
         else HttpResponse(200, emptyMap(), fixture("messages-empty.json"))
     }
 
+    /** `GET /api/v1/sdk/config`; unchanged (304) unless a test says otherwise. */
+    var configResponse: () -> HttpResponse = { HttpResponse(304, emptyMap(), "") }
+
     val batches: List<JSONObject> get() = requests.filter { it.method == "POST" }.map { JSONObject(it.body!!) }
-    val gets: List<HttpRequest> get() = requests.filter { it.method == "GET" }
+    val gets: List<HttpRequest> get() = requests.filter { it.method == "GET" && !it.url.endsWith("/sdk/config") }
+    val configs: List<HttpRequest> get() = requests.filter { it.url.endsWith("/sdk/config") }
 
     override fun execute(request: HttpRequest): HttpResponse {
         requests += request
-        return if (request.method == "POST") batchResponse() else messagesResponse(request)
+        return when {
+            request.method == "POST" -> batchResponse()
+            request.url.endsWith("/sdk/config") -> configResponse()
+            else -> messagesResponse(request)
+        }
     }
 }
 
@@ -62,7 +70,11 @@ internal class CoreHarness(
     val cards = MutableStateFlow<List<ContentCard>>(emptyList())
     val heraldId = MutableStateFlow<String?>(null)
 
-    fun newCore(context: DeviceContext = fixtureContext, mainDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null) = HeraldCore(
+    fun newCore(
+        context: DeviceContext = fixtureContext,
+        mainDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null,
+        onRemoteConfigVersion: (String?) -> Unit = {},
+    ) = HeraldCore(
         dir = dir,
         appKey = "pk_test",
         endpoint = "https://herald.test/",
@@ -78,5 +90,6 @@ internal class CoreHarness(
         newId = { ids.next() },
         mainDispatcher = mainDispatcher,
         background = { it() },
+        onRemoteConfigVersion = onRemoteConfigVersion,
     )
 }

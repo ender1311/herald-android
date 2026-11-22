@@ -154,6 +154,7 @@ object Herald {
                             contentCards = _contentCards,
                             heraldId = _heraldId,
                             mainDispatcher = Dispatchers.Main.immediate,
+                            onRemoteConfigVersion = { remoteConfigVersion = it },
                         ).also {
                             it.display = ::display
                             it.dismissDisplay = ::dismissDisplay
@@ -166,6 +167,7 @@ object Herald {
                 } finally {
                     pending.start { block -> newScope.launch { runCall(block) } }
                 }
+                submit { it.fetchConfig() } // after the buffered calls, so none waits on the network
                 (app as? Application)?.registerActivityLifecycleCallbacks(lifecycle)
             }
         }
@@ -295,6 +297,27 @@ object Herald {
     fun wipeData() {
         if (trySubmit { it.wipeData() }) enabledState = false
     }
+
+    /** The version of the remote SDK settings in use (cached or fetched), for debugging; null before any was fetched. */
+    @Volatile
+    var remoteConfigVersion: String? = null
+        private set
+
+    // Consent
+
+    /**
+     * Records the lawful basis your app collects data under, for your compliance records. Persisted and sent in each
+     * batch until [clearConsent]. It doesn't change what the SDK collects. [documentId] and [documentVersion] (your
+     * policy or terms) are at most 100 characters.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun setConsent(basis: ConsentBasis, documentId: String? = null, documentVersion: String? = null) =
+        submit { it.setConsent(basis, documentId, documentVersion) }
+
+    /** Stops sending the consent record. */
+    @JvmStatic
+    fun clearConsent() = submit { it.clearConsent() }
 
     // Push
 
@@ -597,9 +620,9 @@ object Herald {
             if (foregroundTracker.onStarted()) {
                 submit { it.onForeground() }
                 flushTicker = scope?.launch {
-                    val intervalMs = options.flushIntervalSeconds.coerceAtLeast(1) * 1000
                     while (isActive) {
-                        delay(intervalMs)
+                        // Read each tick (on the SDK thread): a remote send interval applies from the next one.
+                        delay((core?.options ?: options).flushIntervalSeconds.coerceAtLeast(1) * 1000)
                         try {
                             core?.flush()
                         } catch (e: Exception) {

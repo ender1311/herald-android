@@ -1,5 +1,6 @@
 package com.herald.sdk.internal
 
+import com.herald.sdk.ConsentBasis
 import com.herald.sdk.ContentCard
 import com.herald.sdk.ExternalPushCategory
 import com.herald.sdk.DeviceDataCollection
@@ -30,7 +31,7 @@ internal class HeraldCore(
     dir: File,
     private val appKey: String,
     endpoint: String,
-    private val options: HeraldOptions,
+    options: HeraldOptions,
     private val transport: Transport,
     private val contextProvider: () -> DeviceContext,
     private val sdkVersion: String,
@@ -45,9 +46,24 @@ internal class HeraldCore(
     private val mainDispatcher: CoroutineDispatcher? = null,
     /** Runs the one-off push unsubscribe off the SDK thread; tests run it inline. */
     private val background: (() -> Unit) -> Unit = { work -> thread(isDaemon = true, name = "herald-unsubscribe") { work() } },
+    /** Told the remote config version whenever it changes (cached at launch, then fetched): `Herald.remoteConfigVersion`. */
+    private val onRemoteConfigVersion: (String?) -> Unit = {},
 ) {
     private val endpoint = endpoint.trimEnd('/')
     private val state = StateStore(File(dir, StateStore.FILE_NAME))
+    private val localOptions = options
+    private val remoteConfigFile = File(dir, "herald_remote_config.json")
+
+    /** The cached or fetched remote settings, applied before anything is recorded. `enabled: false` is the kill switch. */
+    private var remote: RemoteConfig? = runCatching { remoteConfigFile.readText() }.getOrNull()?.let(RemoteConfig::parse)
+
+    /** What the app configured with the remote settings laid over. */
+    var options: HeraldOptions = remote?.applyTo(options) ?: options
+        private set
+    private val remoteCollects: Boolean get() = remote?.collects ?: true
+
+    /** The last config fetch: at launch, then on a foreground at most once an hour. */
+    private var configFetchedAt: Long? = null
     val queue = EventQueue(File(dir, "herald_queue.json"), QUEUE_CAP)
     val engine = InAppEngine(clock, options.inAppMinimumIntervalSeconds * 1000, state.lastShown) {
         state.userId ?: InAppEngine.ANONYMOUS
@@ -99,11 +115,12 @@ internal class HeraldCore(
     val enabled: Boolean get() = state.enabled
 
     init {
+        onRemoteConfigVersion(remote?.version)
         val freshInstall = state.deviceId == null && state.enabled
         ensureDeviceId()
         heraldId.value = state.heraldId
         state.messagesBody?.let(MessageParser::parse)?.let(::apply)
-        if (state.enabled && options.trackLifecycleEvents) recordAppVersion(freshInstall)
+        if (state.enabled && this.options.trackLifecycleEvents) recordAppVersion(freshInstall) // the remote-applied options
     }
 
     /**
@@ -163,6 +180,7 @@ internal class HeraldCore(
 
     /** [lifecycle] false (re-enabled while in the foreground) sends no lifecycle events. */
     fun onForeground(lifecycle: Boolean = true) {
+        if (configFetchedAt.let { it == null || clock() - it >= CONFIG_FETCH_INTERVAL_MS }) fetchConfig()
         val opened = appOpenPending
         appOpenPending = false
         ensureSession(clock()) // uses the background timeout when coming back from the background
@@ -404,6 +422,7 @@ internal class HeraldCore(
         state.appBuild = null
         state.sessionIndex = 0
         state.lastSessionId = null
+        state.consent = null
         state.enabled = false
         state.delete()
         failures = 0
@@ -508,6 +527,7 @@ internal class HeraldCore(
     }
 
     private fun enqueueRaw(type: String, now: Long, fields: JSONObject.() -> Unit) {
+        if (!remoteCollects) return
         val event = JSONObject()
             .put("id", newId())
             .put("type", type)
@@ -539,7 +559,7 @@ internal class HeraldCore(
     // region delivery
 
     fun flush() {
-        if (!state.enabled || appKeyRejected) return
+        if (!state.enabled || !remoteCollects || appKeyRejected) return
         if (clock() < nextAttemptAt) return
         val expired = queue.dropOlderThan(clock() - options.maxQueuedEventAgeDays * 86_400_000)
         if (expired > 0) HeraldLog.debug("Dropped $expired queued event(s) older than ${options.maxQueuedEventAgeDays} days")
@@ -652,7 +672,7 @@ internal class HeraldCore(
         .put("userId", batch.firstOrNull()?.userId ?: JSONObject.NULL)
         .put("sentAt", isoTimestamp(clock()))
         .put("dropped", dropped)
-        .put("context", contextProvider().toJson(options.deviceDataCollection))
+        .put("context", contextProvider().toJson(options.deviceDataCollection).putOpt("consent", state.consent))
         .put("events", JSONArray(orderForWire(batch.map { it.event })))
         .toString()
 
@@ -668,6 +688,61 @@ internal class HeraldCore(
         val result = rest.map { it.value }.toMutableList()
         result.addAll(firstSubscription, lateTokens.map { it.value })
         return result
+    }
+
+    // endregion
+
+    // region remote config and consent
+
+    /**
+     * Fetches the remote settings (with the cached version as If-None-Match). A network or parse error, or any status
+     * but 200 / 304, keeps what is applied. Skipped while the app turned the SDK off. Same rule as iOS.
+     */
+    fun fetchConfig() {
+        if (!state.enabled) return
+        configFetchedAt = clock()
+        val headers = buildMap {
+            put("x-herald-app-key", appKey)
+            remote?.let { put("If-None-Match", "\"${it.version}\"") }
+        }
+        val response = try {
+            transport.execute(HttpRequest("GET", "$endpoint/api/v1/sdk/config", headers))
+        } catch (e: Exception) {
+            return HeraldLog.info("Config fetch failed (${e.javaClass.simpleName}); keeping the current config")
+        }
+        if (response.status != 200) return
+        val config = RemoteConfig.parse(response.body) ?: return HeraldLog.warn("Config fetch returned an unreadable body")
+        try {
+            remoteConfigFile.writeAtomically(response.body)
+        } catch (e: Exception) {
+            HeraldLog.error("Could not cache the remote config", e)
+        }
+        applyRemote(config)
+    }
+
+    fun applyRemote(config: RemoteConfig) {
+        remote = config
+        options = config.applyTo(localOptions)
+        onRemoteConfigVersion(config.version)
+        if (!config.collects) {
+            queue.clear() // the kill switch: what is queued is never sent
+            HeraldLog.info("Collection is turned off remotely")
+        }
+    }
+
+    fun setConsent(basis: ConsentBasis, documentId: String?, documentVersion: String?) {
+        val id = documentId?.takeIf { it.isNotEmpty() }
+        val version = documentVersion?.takeIf { it.isNotEmpty() }
+        Validation.length("documentId", id ?: "", 0, 100)?.let { return reject("setConsent", it) }
+        Validation.length("documentVersion", version ?: "", 0, 100)?.let { return reject("setConsent", it) }
+        state.consent = JSONObject().put("basis", basis.wire).putOpt("documentId", id).putOpt("documentVersion", version)
+            .put("recordedAt", isoTimestamp(clock()))
+        state.save()
+    }
+
+    fun clearConsent() {
+        state.consent = null
+        state.save()
     }
 
     // endregion
@@ -694,7 +769,7 @@ internal class HeraldCore(
      * on a server known to require one, it waits for [setUserToken] (which syncs) instead of collecting a 401.
      */
     fun syncMessages() {
-        if (!state.enabled) return
+        if (!state.enabled || !remoteCollects) return
         val uid = state.userId
         val sentToken = if (uid != null) state.userToken else null
         if (uid != null && sentToken == null && state.userTokenRequired) return HeraldLog.debug("Message sync waits for setUserToken")
@@ -985,6 +1060,7 @@ internal class HeraldCore(
         const val MAX_EVENT_BYTES = 32 * 1024
         const val MAX_RECENT_OPENS = 50
         const val SYNC_PUSH_DEBOUNCE_MS = 30_000L
+        const val CONFIG_FETCH_INTERVAL_MS = 3_600_000L
         private val SCHEME = Regex("^([A-Za-z][A-Za-z0-9+.-]*):")
     }
 }
