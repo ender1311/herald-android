@@ -438,11 +438,15 @@ internal class HeraldCore(
 
     // region events
 
-    fun track(name: String, properties: Map<String, Any?>) {
+    fun track(
+        name: String,
+        properties: Map<String, Any?>,
+        schemaVersion: String? = null,
+    ) {
         Validation.length("event name", name, 1, Validation.MAX_NAME)?.let { return reject("track", it) }
         Validation.properties("properties", properties)?.let { return reject("track", it) }
         val props = jsonOrNull(properties, "track properties") ?: return
-        enqueue("track") { put("name", name).put("properties", props) }
+        enqueue("track") { put("name", name).put("properties", props).putOpt("schemaVersion", schemaVersion) }
         trigger(TriggerEvent(TriggerType.EVENT, name, properties))
     }
 

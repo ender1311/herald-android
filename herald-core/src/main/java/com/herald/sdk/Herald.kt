@@ -198,7 +198,12 @@ object Herald {
 
     @JvmStatic
     @JvmOverloads
-    fun track(event: String, properties: Map<String, Any?> = emptyMap()) = submit { it.track(event, properties) }
+    /** [schemaVersion] names the event schema version to check the event against (e.g. "1-0-0"); null means the latest. */
+    fun track(
+        event: String,
+        properties: Map<String, Any?> = emptyMap(),
+        schemaVersion: String? = null,
+    ) = submit { it.track(event, properties, schemaVersion) }
 
     /**
      * Reports a push your app sent itself (from its own backend, Firebase or another service) so Herald's push

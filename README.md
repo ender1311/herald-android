@@ -45,6 +45,8 @@ HeraldInAppPresenter.install()
 Herald.identify("user-123", mapOf("plan" to "free"))
 Herald.setUserToken(userTokenFromYourBackend)
 Herald.track("workout_completed", mapOf("minutes" to 32))
+// From 0.6.0, pin an event schema version (Settings, Event schemas in the console); null checks against the latest.
+Herald.track("signup", mapOf("plan" to "pro"), schemaVersion = "1-0-0")
 
 // In a composable: ContentCardFeed()
 ```

@@ -29,6 +29,17 @@ class HeraldCoreTest {
     }
 
     @Test
+    fun trackSendsSchemaVersionOnlyWhenGiven() {
+        core.track("signup", mapOf("plan" to "pro"), schemaVersion = "1-0-0")
+        core.track("signup", emptyMap())
+        core.flush()
+        val all = h.transport.batches.single().getJSONArray("events")
+        val tracks = (0 until all.length()).map { all.getJSONObject(it) }.filter { it.getString("type") == "track" }
+        assertEquals("1-0-0", tracks[0].getString("schemaVersion"))
+        assertFalse(tracks[1].has("schemaVersion"))
+    }
+
+    @Test
     fun dropsBatchOn400_401_413() {
         for (code in listOf(400, 401, 413)) {
             h.transport.batchResponse = status(code)
