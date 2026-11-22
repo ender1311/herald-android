@@ -7,8 +7,6 @@ import org.junit.Test
 import java.io.File
 
 class LifecycleTest {
-    private val on = HeraldOptions(trackLifecycleEvents = true)
-
     /** Everything sent so far plus what is still queued, in order. */
     private fun events(h: CoreHarness, core: com.herald.sdk.internal.HeraldCore): List<JSONObject> =
         h.transport.batches.flatMap { b -> b.getJSONArray("events").let { a -> (0 until a.length()).map { a.getJSONObject(it) } } } +
@@ -20,17 +18,17 @@ class LifecycleTest {
 
     @Test
     fun installThenNormalLaunchThenUpdate() {
-        val h = CoreHarness(options = on)
+        val h = CoreHarness(lifecycle = true)
         var core = h.newCore()
         var sent = events(h, core)
-        assertEquals(listOf("session_start", "\$app_installed"), names(sent))
-        assertEquals(mapOf("version" to "4.2.0", "build" to "812"), sent[1].getJSONObject("properties").asMap())
+        assertEquals("a launch alone starts no session", listOf("\$app_installed"), names(sent))
+        assertEquals(mapOf("version" to "4.2.0", "build" to "812"), sent[0].getJSONObject("properties").asMap())
         core.flush()
 
-        core = CoreHarness(dir = h.dir, transport = h.transport, clock = h.clock, options = on).newCore()
-        assertEquals("same version: nothing new", 2, names(events(h, core)).size)
+        core = CoreHarness(dir = h.dir, transport = h.transport, clock = h.clock, lifecycle = true).newCore()
+        assertEquals("same version: nothing new", 1, names(events(h, core)).size)
 
-        core = CoreHarness(dir = h.dir, transport = h.transport, clock = h.clock, options = on)
+        core = CoreHarness(dir = h.dir, transport = h.transport, clock = h.clock, lifecycle = true)
             .newCore(context = fixtureContext.copy(appVersion = "4.3.0", appBuild = "900"))
         sent = events(h, core)
         assertEquals("\$app_updated", names(sent).last())
@@ -42,7 +40,7 @@ class LifecycleTest {
     fun stateFromAnOlderSdkOnlyStoresTheVersion() {
         val dir = java.nio.file.Files.createTempDirectory("herald").toFile()
         File(dir, "herald_state.json").writeText("""{"deviceId":"d1"}""")
-        val h = CoreHarness(dir = dir, options = on)
+        val h = CoreHarness(dir = dir, lifecycle = true)
         val core = h.newCore()
         assertEquals(emptyList<String>(), names(events(h, core)))
         assertEquals("4.2.0", JSONObject(File(dir, "herald_state.json").readText()).getString("appVersion"))
@@ -50,7 +48,7 @@ class LifecycleTest {
 
     @Test
     fun openedForegroundAndBackground() {
-        val h = CoreHarness(options = on.copy(trackLifecycleEvents = true))
+        val h = CoreHarness(lifecycle = true)
         val core = h.newCore()
         core.onPushOpened("m1", "d1")
         core.onForeground()
@@ -66,7 +64,7 @@ class LifecycleTest {
 
     @Test
     fun openedWithoutPushAndOffSwitch() {
-        var h = CoreHarness(options = on)
+        var h = CoreHarness(lifecycle = true)
         var core = h.newCore()
         core.onForeground()
         assertEquals(false, events(h, core).first { it.optString("name") == "\$app_opened" }.getJSONObject("properties").getBoolean("from_push"))
@@ -80,10 +78,10 @@ class LifecycleTest {
 
     @Test
     fun lifecycleEventsSendInMinimalMode() {
-        val h = CoreHarness(options = on.copy(deviceDataCollection = DeviceDataCollection.MINIMAL))
+        val h = CoreHarness(options = HeraldOptions(deviceDataCollection = DeviceDataCollection.MINIMAL))
         val core = h.newCore()
         core.onForeground()
-        assertEquals(listOf("session_start", "\$app_installed", "\$app_opened", "\$app_foreground"), names(events(h, core)))
+        assertEquals(listOf("\$app_installed", "session_start", "\$app_opened", "\$app_foreground"), names(events(h, core)))
     }
 
     @Test
@@ -104,6 +102,62 @@ class LifecycleTest {
             props(off.copy(deviceDataCollection = DeviceDataCollection.MINIMAL, trackDeepLinkQuery = true))?.asMap(),
         )
         assertEquals(null, props(off.copy(trackDeepLinks = false)))
+    }
+
+    @Test
+    fun goingToTheBackgroundAfterAnIdleForegroundStartsNoSession() {
+        val h = CoreHarness(lifecycle = true)
+        val core = h.newCore()
+        core.onForeground()
+        h.clock.advance(35 * 60_000) // past the 30-minute foreground timeout, nothing tracked
+        core.onBackground()
+        val sent = events(h, core)
+        assertEquals(listOf("\$app_installed", "session_start", "\$app_opened", "\$app_foreground", "\$app_background"), names(sent))
+        assertEquals(sent[1].getString("sessionId"), sent.last().getString("sessionId"))
+    }
+
+    @Test
+    fun aConfigurationChangeIsNoTransition() {
+        val t = com.herald.sdk.internal.ForegroundTracker()
+        assertEquals(true, t.onStarted()) // app opens
+        assertEquals(false, t.onStopped(isChangingConfigurations = true)) // rotation, dark mode, resize
+        assertEquals(false, t.onStarted()) // the recreated activity
+        assertEquals(false, t.onStarted()) // a second activity
+        assertEquals(false, t.onStopped(isChangingConfigurations = false))
+        assertEquals(true, t.onStopped(isChangingConfigurations = false)) // Home
+        assertEquals(true, t.onStarted())
+    }
+
+    @Test
+    fun coldStartAfterTheBackgroundUsesTheBackgroundTimeout() {
+        val options = HeraldOptions(trackLifecycleEvents = false, foregroundSessionTimeoutMinutes = 60, backgroundSessionTimeoutMinutes = 5)
+        val h = CoreHarness(options = options)
+        var core = h.newCore()
+        core.onForeground()
+        core.onBackground()
+        h.clock.advance(10 * 60_000)
+        core = CoreHarness(dir = h.dir, transport = h.transport, clock = h.clock, options = options).newCore() // killed in the background
+        core.onForeground()
+        assertEquals(listOf("session_start", "session_end", "session_start"), names(events(h, core)))
+    }
+
+    @Test
+    fun deepLinkWithoutAHostSendsTheSchemeOnly() {
+        val cases = mapOf(
+            "mailto:a@b.com?subject=hi" to mapOf("scheme" to "mailto", "source" to "link"),
+            "tel:+15551234567" to mapOf("scheme" to "tel", "source" to "link"),
+            "https://x.com/a?b" to mapOf("scheme" to "https", "host" to "x.com", "path" to "/a", "query" to "b", "source" to "link"),
+            "myapp://screen/x" to mapOf("scheme" to "myapp", "host" to "screen", "path" to "/x", "source" to "link"),
+            "myapp://screen/x;jsessionid=s" to mapOf("scheme" to "myapp", "host" to "screen", "path" to "/x", "source" to "link"),
+            "myapp://deep_link/x" to mapOf("scheme" to "myapp", "host" to "deep_link", "path" to "/x", "source" to "link"),
+            "https://x.com/a b" to mapOf("scheme" to "https", "source" to "link"),
+        )
+        for ((url, expected) in cases) {
+            val h = CoreHarness(options = HeraldOptions(trackLifecycleEvents = false, trackDeepLinkQuery = true))
+            val core = h.newCore()
+            core.deepLinkOpened(url, "link")
+            assertEquals(url, expected, events(h, core).last().getJSONObject("properties").asMap())
+        }
     }
 
     @Test
@@ -146,9 +200,11 @@ class LifecycleTest {
     @Suppress("DEPRECATION")
     @Test
     fun deprecatedSessionTimeoutSetsBoth() {
-        val options = HeraldOptions(sessionTimeoutMinutes = 2)
-        assertEquals(2L, options.foregroundSessionTimeoutMinutes)
-        assertEquals(2L, options.backgroundSessionTimeoutMinutes)
+        for (options in listOf(HeraldOptions(sessionTimeoutMinutes = 2), HeraldOptions().copy(sessionTimeoutMinutes = 2))) {
+            assertEquals(2L, options.foregroundTimeoutMinutes)
+            assertEquals(2L, options.backgroundTimeoutMinutes)
+        }
+        assertEquals(7L, HeraldOptions(sessionTimeoutMinutes = 2, foregroundSessionTimeoutMinutes = 7).foregroundTimeoutMinutes)
     }
 
     @Test

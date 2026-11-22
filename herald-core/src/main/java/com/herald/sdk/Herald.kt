@@ -12,6 +12,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import com.herald.sdk.internal.AndroidDeviceContext
+import com.herald.sdk.internal.ForegroundTracker
 import com.herald.sdk.internal.HeraldCore
 import com.herald.sdk.internal.HeraldLog
 import com.herald.sdk.internal.HttpUrlConnectionTransport
@@ -111,7 +112,7 @@ object Herald {
 
     /** SDK thread only: drops content cards when the soonest one expires. */
     private var cardRefresh: Job? = null
-    private var startedActivities = 0
+    private val foregroundTracker = ForegroundTracker()
 
     @Volatile
     private var currentActivity: WeakReference<Activity>? = null
@@ -593,8 +594,7 @@ object Herald {
 
     private val lifecycle = object : Application.ActivityLifecycleCallbacks {
         override fun onActivityStarted(activity: Activity) {
-            startedActivities++
-            if (startedActivities == 1) {
+            if (foregroundTracker.onStarted()) {
                 submit { it.onForeground() }
                 flushTicker = scope?.launch {
                     val intervalMs = options.flushIntervalSeconds.coerceAtLeast(1) * 1000
@@ -611,8 +611,7 @@ object Herald {
         }
 
         override fun onActivityStopped(activity: Activity) {
-            startedActivities = (startedActivities - 1).coerceAtLeast(0)
-            if (startedActivities == 0) {
+            if (foregroundTracker.onStopped(activity.isChangingConfigurations)) {
                 flushTicker?.cancel()
                 flushTicker = null
                 submit { it.onBackground() }

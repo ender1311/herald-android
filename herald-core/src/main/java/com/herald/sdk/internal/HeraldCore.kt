@@ -76,9 +76,6 @@ internal class HeraldCore(
     private var sessionTriggerDue = false
     private var pushOpenTriggerDue = false
 
-    /** Backgrounded since the last foreground: sessions then time out after `backgroundSessionTimeoutMinutes`. */
-    private var inBackground = false
-
     /** `$app_opened` waits for this launch's first foreground; a push tap seen before it sets `from_push`. */
     private var appOpenPending = true
     private var openedFromPush = false
@@ -119,9 +116,9 @@ internal class HeraldCore(
         val build = context.appBuild.take(64)
         val previous = state.appVersion
         if (freshInstall) {
-            recordLifecycle("${'$'}app_installed") { put("version", version).put("build", build) }
+            recordLifecycle("${'$'}app_installed", session = false) { put("version", version).put("build", build) }
         } else if (previous != null && (previous != version || state.appBuild != build)) {
-            recordLifecycle("${'$'}app_updated") {
+            recordLifecycle("${'$'}app_updated", session = false) {
                 put("version", version).put("build", build)
                     .put("previous_version", previous).put("previous_build", state.appBuild ?: "")
             }
@@ -132,9 +129,11 @@ internal class HeraldCore(
         state.save()
     }
 
-    private fun recordLifecycle(name: String, properties: JSONObject.() -> Unit = {}) {
+    /** [session] false queues the event without starting or ending a session (going to the background, launch). */
+    private fun recordLifecycle(name: String, session: Boolean = true, properties: JSONObject.() -> Unit = {}) {
         if (!state.enabled || !options.trackLifecycleEvents) return
-        enqueue("track") { put("name", name).put("properties", JSONObject().apply(properties)) }
+        val fields: JSONObject.() -> Unit = { put("name", name).put("properties", JSONObject().apply(properties)) }
+        if (session) enqueue("track", fields) else enqueueRaw("track", clock(), fields)
     }
 
     /**
@@ -143,12 +142,19 @@ internal class HeraldCore(
      */
     fun deepLinkOpened(url: String, source: String) {
         if (!state.enabled || !options.trackDeepLinks) return
-        val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return
+        val scheme = SCHEME.find(url)?.groupValues?.get(1) ?: return
+        // An unparseable URL (unencoded spaces) sends its scheme only. URI drops hosts with "_"; its authority keeps them.
+        val uri = runCatching { java.net.URI(url) }.getOrNull()
+        val host = uri?.let { it.host ?: it.rawAuthority?.substringAfterLast('@')?.substringBefore(':') }?.takeIf { it.isNotEmpty() }
         val max = Validation.MAX_NAME
-        val props = JSONObject().put("scheme", (uri.scheme ?: "").take(max)).put("host", (uri.host ?: "").take(max)).put("source", source)
-        if (options.deviceDataCollection == DeviceDataCollection.STANDARD) {
-            props.put("path", (uri.path ?: "").take(max))
-            if (options.trackDeepLinkQuery) uri.query?.let { props.put("query", it.take(max)) }
+        val props = JSONObject().put("scheme", scheme.take(max)).put("source", source)
+        // No host (mailto:, tel:): scheme only, so an address or number never reaches the event log. Same rule as iOS.
+        if (host != null) {
+            props.put("host", host.take(max))
+            if (options.deviceDataCollection == DeviceDataCollection.STANDARD) {
+                props.put("path", (uri.path ?: "").substringBefore(';').take(max)) // `;params` (session ids) are cut
+                if (options.trackDeepLinkQuery) uri.query?.let { props.put("query", it.take(max)) }
+            }
         }
         enqueue("track") { put("name", "${'$'}deep_link_opened").put("properties", props) }
     }
@@ -159,8 +165,11 @@ internal class HeraldCore(
     fun onForeground(lifecycle: Boolean = true) {
         val opened = appOpenPending
         appOpenPending = false
-        ensureSession(clock())
-        inBackground = false
+        ensureSession(clock()) // uses the background timeout when coming back from the background
+        if (state.inBackground) {
+            state.inBackground = false
+            state.save()
+        }
         foreground = true
         if (lifecycle) {
             if (opened) recordLifecycle("${'$'}app_opened") { put("from_push", openedFromPush) }
@@ -180,10 +189,12 @@ internal class HeraldCore(
     }
 
     fun onBackground() {
-        recordLifecycle("${'$'}app_background")
         foreground = false
-        inBackground = true
+        // Persisted: a cold start after a kill in the background decides continuation with the background timeout.
+        state.inBackground = true
         if (!state.enabled) return
+        // Never starts or ends a session: going to the background isn't activity.
+        recordLifecycle("${'$'}app_background", session = false)
         state.lastActivity = clock()
         state.save()
         flush()
@@ -196,7 +207,7 @@ internal class HeraldCore(
      */
     private fun ensureSession(now: Long) {
         if (!state.enabled) return
-        val timeoutMinutes = if (inBackground) options.backgroundSessionTimeoutMinutes else options.foregroundSessionTimeoutMinutes
+        val timeoutMinutes = if (state.inBackground) options.backgroundTimeoutMinutes else options.foregroundTimeoutMinutes
         if (state.sessionId != null) {
             if (now - state.lastActivity < timeoutMinutes * 60_000) {
                 state.lastActivity = now
@@ -388,6 +399,7 @@ internal class HeraldCore(
         state.sessionStart = 0
         state.lastActivity = 0
         state.userTokenRequired = false
+        state.inBackground = false
         state.appVersion = null
         state.appBuild = null
         state.sessionIndex = 0
@@ -944,7 +956,6 @@ internal class HeraldCore(
     /** [buttonId] is the notification action the user tapped; it logs a `button` interaction after the open. */
     fun onPushOpened(messageId: String, decisionId: String?, buttonId: String? = null) {
         if (!state.enabled) return
-        openedFromPush = true
         // The system redelivers the original intent extras after recreation; count each decision's open once.
         // Without a decisionId there is no per-send key (a messageId can repeat across sends), so no dedupe.
         if (decisionId != null) {
@@ -953,6 +964,7 @@ internal class HeraldCore(
             while (state.recentPushOpens.size > MAX_RECENT_OPENS) state.recentPushOpens.removeAt(0)
             state.save()
         }
+        openedFromPush = true // after the dedupe: a redelivered intent (restored task) isn't a launch from a push
         logInteraction(messageId, "push", "open", decisionId)
         if (buttonId != null) logInteraction(messageId, "push", "button", decisionId, buttonId)
         if (foreground) trigger(TriggerEvent(TriggerType.PUSH_OPEN)) else pushOpenTriggerDue = true
@@ -973,5 +985,6 @@ internal class HeraldCore(
         const val MAX_EVENT_BYTES = 32 * 1024
         const val MAX_RECENT_OPENS = 50
         const val SYNC_PUSH_DEBOUNCE_MS = 30_000L
+        private val SCHEME = Regex("^([A-Za-z][A-Za-z0-9+.-]*):")
     }
 }
