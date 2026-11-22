@@ -43,6 +43,8 @@ internal class StateStore(private val file: File) {
      * identified syncs wait for `setUserToken` instead of collecting a 401.
      */
     var userTokenRequired = false
+    /** The current user's User ID (XXXX-XXXX) from the last accepted batch; null while anonymous. */
+    var heraldId: String? = null
 
     init {
         load()
@@ -68,6 +70,7 @@ internal class StateStore(private val file: File) {
             .put("recentPushOpens", JSONArray(recentPushOpens.toList()))
             .put("impressedCardIds", JSONArray(impressedCardIds.toList()))
             .put("userTokenRequired", userTokenRequired)
+            .putOpt("heraldId", heraldId)
         try {
             file.writeAtomically(json.toString())
         } catch (e: Exception) {
@@ -129,6 +132,7 @@ internal class StateStore(private val file: File) {
             etag = json.str("etag")
             messagesBody = json.str("messagesBody")
             userTokenRequired = json.optBoolean("userTokenRequired", false)
+            heraldId = json.str("heraldId")
             json.arr("dismissedCardIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(dismissedCardIds::add) } }
             json.arr("undeliveredIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(undeliveredIds::add) } }
             json.arr("recentPushOpens")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(recentPushOpens::add) } }

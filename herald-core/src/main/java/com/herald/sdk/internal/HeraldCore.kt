@@ -35,6 +35,8 @@ internal class HeraldCore(
     private val sdkVersion: String,
     private val bundleId: String? = null,
     private val contentCards: MutableStateFlow<List<ContentCard>> = MutableStateFlow(emptyList()),
+    /** Mirrors the persisted User ID for `Herald.heraldId`. */
+    private val heraldId: MutableStateFlow<String?> = MutableStateFlow(null),
     private val clock: () -> Long = System::currentTimeMillis,
     private val random: Random = Random.Default,
     private val newId: () -> String = { UUID.randomUUID().toString() },
@@ -93,6 +95,7 @@ internal class HeraldCore(
 
     init {
         ensureDeviceId()
+        heraldId.value = state.heraldId
         state.messagesBody?.let(MessageParser::parse)?.let(::apply)
     }
 
@@ -216,6 +219,7 @@ internal class HeraldCore(
         state.deferredPushSubscription = null
         state.userId = null
         state.userToken = null
+        setHeraldId(null)
         state.etag = null
         state.messagesBody = null
         state.dismissedCardIds.clear()
@@ -484,6 +488,12 @@ internal class HeraldCore(
                         state.userTokenRequired = false
                         state.save()
                     }
+                    // Only the current user's: a batch from before a sign-out or switch names the previous person.
+                    val id = if (batchUser != null && batchUser == state.userId) heraldIdIn(response.body) else null
+                    if (id != null && id != state.heraldId) {
+                        setHeraldId(id)
+                        state.save()
+                    }
                     failures = 0
                     nextAttemptAt = 0
                     queue.remove(batch, dropped)
@@ -515,6 +525,16 @@ internal class HeraldCore(
             }
         }
     }
+
+    /** A new person (sign-out, another user) has no User ID until their first accepted batch. */
+    private fun setHeraldId(id: String?) {
+        state.heraldId = id
+        heraldId.value = id
+    }
+
+    /** `data.heraldId` of an accepted batch response, when the server sent one. */
+    private fun heraldIdIn(body: String): String? =
+        runCatching { JSONObject(body).optJSONObject("data")?.optString("heraldId")?.takeIf { it.isNotEmpty() } }.getOrNull()
 
     /** A 401 whose body is the server's `{"error":"Invalid app key"}` (src/lib/sdk/auth.ts). */
     private fun isAppKeyRejection(body: String): Boolean =

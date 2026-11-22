@@ -58,6 +58,7 @@ internal class CoreHarness(
     val ids: Iterator<String> = generateSequence(1) { it + 1 }.map { "id-$it" }.iterator(),
 ) {
     val cards = MutableStateFlow<List<ContentCard>>(emptyList())
+    val heraldId = MutableStateFlow<String?>(null)
 
     fun newCore(context: DeviceContext = fixtureContext, mainDispatcher: kotlinx.coroutines.CoroutineDispatcher? = null) = HeraldCore(
         dir = dir,
@@ -69,6 +70,7 @@ internal class CoreHarness(
         sdkVersion = "0.4.0",
         bundleId = "com.lumen.app",
         contentCards = cards,
+        heraldId = heraldId,
         clock = { clock.now },
         random = Random(42),
         newId = { ids.next() },

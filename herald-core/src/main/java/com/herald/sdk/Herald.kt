@@ -56,6 +56,16 @@ object Herald {
     /** The current user's content cards, unexpired and not dismissed, in server order. */
     val contentCards: StateFlow<List<ContentCard>> = _contentCards.asStateFlow()
 
+    private val _heraldId = MutableStateFlow<String?>(null)
+
+    /**
+     * The identified person's User ID (`XXXX-XXXX`), which support can search on People. Show it on a settings or
+     * help screen labeled "Support ID". Null until the first batch after [identify] is accepted, and again after
+     * [reset] or identifying another user. Cached across launches once [configure] has loaded it.
+     */
+    @JvmStatic
+    val heraldId: String? get() = _heraldId.value
+
     /** Decides whether a triggered in-app message shows now, later or never. */
     @Volatile
     var inAppMessageDelegate: InAppMessageDelegate? = null
@@ -141,6 +151,7 @@ object Herald {
                             sdkVersion = SDK_VERSION,
                             bundleId = app.packageName,
                             contentCards = _contentCards,
+                            heraldId = _heraldId,
                             mainDispatcher = Dispatchers.Main.immediate,
                         ).also {
                             it.display = ::display

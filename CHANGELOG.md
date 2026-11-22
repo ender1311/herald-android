@@ -8,6 +8,7 @@ Releases follow the policy on [Versioning and support](https://heraldsdk.com/doc
 
 - `Herald.trackExternalPush(messageId, category, source)` reports a push your app sent itself (`$external_push`), so Herald's push limit across all sources counts it. `ExternalPushCategory` is `TRANSACTIONAL`, `MARKETING` or `OTHER` (the default). Never include the push's title or body.
 - `HeraldOptions.trackExternalPushes` (default `true`): herald-fcm's `HeraldMessagingService` records an FCM message that isn't from Herald and carries a notification as `$external_push` when it reaches the app. Data-only messages never are. The id is the data key `herald_external_id` when present, else `RemoteMessage.messageId`; the category is `herald_category` (`transactional`, `marketing` or `other`), else `other`. Your own FirebaseMessagingService can call `Herald.handleExternalPush(data, hasNotification, fcmMessageId)`. Taps on your own notifications record nothing.
+- `Herald.heraldId: String?`: the identified person's User ID (`XXXX-XXXX`), which support can search on People. Read from the batch response (`data.heraldId`) and cached; null until the first accepted batch after `identify`, and cleared by `reset()` or identifying another user. Show it as a "Support ID".
 
 ## 0.5.0
 
