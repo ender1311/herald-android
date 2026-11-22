@@ -36,4 +36,16 @@ class HeraldIdTest {
         core.flush()
         assertNull(h.heraldId.value)
     }
+
+    @Test
+    fun `a null or missing heraldId is no value, not the string null`() {
+        for (body in listOf("""{"data":{"accepted":1,"duplicates":0,"heraldId":null}}""", """{"data":{"accepted":1,"duplicates":0}}""")) {
+            val h = CoreHarness()
+            val core = h.newCore()
+            core.identify("u_123", emptyMap())
+            h.transport.batchResponse = { HttpResponse(200, emptyMap(), body) }
+            core.flush()
+            assertNull(h.heraldId.value)
+        }
+    }
 }

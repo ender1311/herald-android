@@ -534,7 +534,11 @@ internal class HeraldCore(
 
     /** `data.heraldId` of an accepted batch response, when the server sent one. */
     private fun heraldIdIn(body: String): String? =
-        runCatching { JSONObject(body).optJSONObject("data")?.optString("heraldId")?.takeIf { it.isNotEmpty() } }.getOrNull()
+        runCatching {
+            // A JSON null or a missing key is no value, never the string "null".
+            val data = JSONObject(body).optJSONObject("data")
+            if (data == null || data.isNull("heraldId")) null else data.optString("heraldId").takeIf { it.isNotEmpty() }
+        }.getOrNull()
 
     /** A 401 whose body is the server's `{"error":"Invalid app key"}` (src/lib/sdk/auth.ts). */
     private fun isAppKeyRejection(body: String): Boolean =
