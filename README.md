@@ -61,8 +61,7 @@ Herald.trackExternalPush(messageId = "order-42-shipped", category = ExternalPush
 ```
 
 With `trackExternalPushes` on (the default, in `HeraldOptions`), herald-fcm's `HeraldMessagingService` also records an
-FCM message that isn't from Herald and carries a notification when it reaches the app (while the app is in the
-foreground; in the background Android shows notification messages without the app). Data-only messages are never
+FCM message that isn't from Herald and carries a notification when it arrives. The SDKs also record some of these pushes on their own: on iOS when someone taps one, and on Android when one arrives. To count every push, report them from your backend. Data-only messages are never
 recorded, and taps on your own notifications aren't. Put the id your backend reports in the data key
 `herald_external_id` (else `RemoteMessage.messageId` is used) and `transactional`, `marketing` or `other` in
 `herald_category`, so the backend's report and the SDK's count once. In your own FirebaseMessagingService, call
