@@ -2,6 +2,7 @@ package com.herald.sdk.internal
 
 import com.herald.sdk.ContentCard
 import com.herald.sdk.ExternalPushCategory
+import com.herald.sdk.DeviceDataCollection
 import com.herald.sdk.HeraldOptions
 import com.herald.sdk.InAppDisplayDecision
 import com.herald.sdk.InAppMessage
@@ -74,6 +75,13 @@ internal class HeraldCore(
     private var foreground = false
     private var sessionTriggerDue = false
     private var pushOpenTriggerDue = false
+
+    /** Backgrounded since the last foreground: sessions then time out after `backgroundSessionTimeoutMinutes`. */
+    private var inBackground = false
+
+    /** `$app_opened` waits for this launch's first foreground; a push tap seen before it sets `from_push`. */
+    private var appOpenPending = true
+    private var openedFromPush = false
     private var failures = 0
 
     /** Users whose batch got 401: their events stay queued and unsent until [setUserToken]. */
@@ -94,16 +102,70 @@ internal class HeraldCore(
     val enabled: Boolean get() = state.enabled
 
     init {
+        val freshInstall = state.deviceId == null && state.enabled
         ensureDeviceId()
         heraldId.value = state.heraldId
         state.messagesBody?.let(MessageParser::parse)?.let(::apply)
+        if (state.enabled && options.trackLifecycleEvents) recordAppVersion(freshInstall)
+    }
+
+    /**
+     * `$app_installed` on this install's first launch, `$app_updated` when the version or build changed. State
+     * from an SDK before 0.6.0 has no stored version: that launch only stores it. Same rule as iOS.
+     */
+    private fun recordAppVersion(freshInstall: Boolean) {
+        val context = contextProvider()
+        val version = context.appVersion.take(64)
+        val build = context.appBuild.take(64)
+        val previous = state.appVersion
+        if (freshInstall) {
+            recordLifecycle("${'$'}app_installed") { put("version", version).put("build", build) }
+        } else if (previous != null && (previous != version || state.appBuild != build)) {
+            recordLifecycle("${'$'}app_updated") {
+                put("version", version).put("build", build)
+                    .put("previous_version", previous).put("previous_build", state.appBuild ?: "")
+            }
+        }
+        if (previous == version && state.appBuild == build) return
+        state.appVersion = version
+        state.appBuild = build
+        state.save()
+    }
+
+    private fun recordLifecycle(name: String, properties: JSONObject.() -> Unit = {}) {
+        if (!state.enabled || !options.trackLifecycleEvents) return
+        enqueue("track") { put("name", name).put("properties", JSONObject().apply(properties)) }
+    }
+
+    /**
+     * `$deep_link_opened` for a deep link the SDK routes ([source] `push` or `link`). No query or fragment unless
+     * `trackDeepLinkQuery`; scheme and host only in minimal data collection. Same rule as iOS.
+     */
+    fun deepLinkOpened(url: String, source: String) {
+        if (!state.enabled || !options.trackDeepLinks) return
+        val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return
+        val max = Validation.MAX_NAME
+        val props = JSONObject().put("scheme", (uri.scheme ?: "").take(max)).put("host", (uri.host ?: "").take(max)).put("source", source)
+        if (options.deviceDataCollection == DeviceDataCollection.STANDARD) {
+            props.put("path", (uri.path ?: "").take(max))
+            if (options.trackDeepLinkQuery) uri.query?.let { props.put("query", it.take(max)) }
+        }
+        enqueue("track") { put("name", "${'$'}deep_link_opened").put("properties", props) }
     }
 
     // region lifecycle
 
-    fun onForeground() {
+    /** [lifecycle] false (re-enabled while in the foreground) sends no lifecycle events. */
+    fun onForeground(lifecycle: Boolean = true) {
+        val opened = appOpenPending
+        appOpenPending = false
         ensureSession(clock())
+        inBackground = false
         foreground = true
+        if (lifecycle) {
+            if (opened) recordLifecycle("${'$'}app_opened") { put("from_push", openedFromPush) }
+            recordLifecycle("${'$'}app_foreground")
+        }
         if (pushOpenTriggerDue) {
             pushOpenTriggerDue = false
             trigger(TriggerEvent(TriggerType.PUSH_OPEN))
@@ -118,7 +180,9 @@ internal class HeraldCore(
     }
 
     fun onBackground() {
+        recordLifecycle("${'$'}app_background")
         foreground = false
+        inBackground = true
         if (!state.enabled) return
         state.lastActivity = clock()
         state.save()
@@ -126,13 +190,15 @@ internal class HeraldCore(
     }
 
     /**
-     * Continues the current session or, after `sessionTimeoutMinutes` without activity (any recorded call or
-     * foreground, in the foreground or background), ends it and starts a new one. Same rule as iOS.
+     * Continues the current session or, after the foreground (or, once backgrounded, the background) timeout without
+     * activity (any recorded call or foreground), ends it and starts a new one. A session persisted by an earlier
+     * launch continues the same way. Same rule as iOS.
      */
     private fun ensureSession(now: Long) {
         if (!state.enabled) return
+        val timeoutMinutes = if (inBackground) options.backgroundSessionTimeoutMinutes else options.foregroundSessionTimeoutMinutes
         if (state.sessionId != null) {
-            if (now - state.lastActivity < options.sessionTimeoutMinutes * 60_000) {
+            if (now - state.lastActivity < timeoutMinutes * 60_000) {
                 state.lastActivity = now
                 // Activity is persisted at most once a minute (and on background), as on iOS.
                 if (now - activityPersistedAt >= 60_000) {
@@ -144,12 +210,17 @@ internal class HeraldCore(
             enqueueSessionEnd()
         }
         activityPersistedAt = now
+        val previousId = state.sessionId ?: state.lastSessionId
         state.sessionId = now.toString()
+        state.sessionIndex++
+        state.lastSessionId = state.sessionId
         state.sessionStart = now
         state.lastActivity = now
         state.impressedCardIds.clear()
         state.save()
-        enqueueRaw("session_start", now) {}
+        enqueueRaw("session_start", now) {
+            put("properties", JSONObject().put("session_index", state.sessionIndex).put("previous_session_id", previousId ?: JSONObject.NULL))
+        }
         syncMessages()
         if (foreground) trigger(TriggerEvent(TriggerType.SESSION_START)) else sessionTriggerDue = true
     }
@@ -245,7 +316,7 @@ internal class HeraldCore(
         }
         ensureDeviceId()
         state.messagesBody?.let(MessageParser::parse)?.let(::apply)
-        if (foreground) onForeground() // start the session now, as iOS does
+        if (foreground) onForeground(lifecycle = false) // start the session now, as iOS does
         if (!wasEnabled) restorePushIfAuthorized()
     }
 
@@ -317,6 +388,10 @@ internal class HeraldCore(
         state.sessionStart = 0
         state.lastActivity = 0
         state.userTokenRequired = false
+        state.appVersion = null
+        state.appBuild = null
+        state.sessionIndex = 0
+        state.lastSessionId = null
         state.enabled = false
         state.delete()
         failures = 0
@@ -453,6 +528,9 @@ internal class HeraldCore(
 
     fun flush() {
         if (!state.enabled || appKeyRejected) return
+        if (clock() < nextAttemptAt) return
+        val expired = queue.dropOlderThan(clock() - options.maxQueuedEventAgeDays * 86_400_000)
+        if (expired > 0) HeraldLog.debug("Dropped $expired queued event(s) older than ${options.maxQueuedEventAgeDays} days")
         while (true) {
             if (clock() < nextAttemptAt) return
             var batch = queue.peekBatch(MAX_BATCH_EVENTS, usersAwaitingToken)
@@ -866,6 +944,7 @@ internal class HeraldCore(
     /** [buttonId] is the notification action the user tapped; it logs a `button` interaction after the open. */
     fun onPushOpened(messageId: String, decisionId: String?, buttonId: String? = null) {
         if (!state.enabled) return
+        openedFromPush = true
         // The system redelivers the original intent extras after recreation; count each decision's open once.
         // Without a decisionId there is no per-send key (a messageId can repeat across sends), so no dedupe.
         if (decisionId != null) {

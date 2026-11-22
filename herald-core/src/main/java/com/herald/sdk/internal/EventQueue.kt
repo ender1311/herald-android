@@ -60,6 +60,18 @@ internal class EventQueue(private val file: File, private val cap: Int = 1000) {
         if (changed) persist()
     }
 
+    /** Drops events stamped before [cutoffMs] (Herald would reject them), counting them in [dropped]. */
+    fun dropOlderThan(cutoffMs: Long): Int {
+        val before = entries.size
+        entries.removeAll { e -> parseIso(e.event.optString("timestamp"))?.let { it < cutoffMs } ?: false }
+        val removed = before - entries.size
+        if (removed > 0) {
+            dropped += removed
+            persist()
+        }
+        return removed
+    }
+
     fun clear() {
         entries.clear()
         dropped = 0

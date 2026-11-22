@@ -9,18 +9,32 @@ Releases follow the policy on [Versioning and support](https://heraldsdk.com/doc
 - `Herald.trackExternalPush(messageId, category, source)` reports a push your app sent itself (`$external_push`), so Herald's push limit across all sources counts it. `ExternalPushCategory` is `TRANSACTIONAL`, `MARKETING` or `OTHER` (the default). Never include the push's title or body.
 - `HeraldOptions.trackExternalPushes` (default `true`): herald-fcm's `HeraldMessagingService` records an FCM message that isn't from Herald and carries a notification as `$external_push` when it reaches the app. Data-only messages never are. The id is the data key `herald_external_id` when present, else `RemoteMessage.messageId`; the category is `herald_category` (`transactional`, `marketing` or `other`), else `other`. Your own FirebaseMessagingService can call `Herald.handleExternalPush(data, hasNotification, fcmMessageId)`. Taps on your own notifications record nothing.
 - `Herald.heraldId: String?`: the identified person's User ID (`XXXX-XXXX`), which support can search on People. Read from the batch response (`data.heraldId`) and cached; null until the first accepted batch after `identify`, and cleared by `reset()` or identifying another user. Show it as a "Support ID".
+- Lifecycle events, on by default (`HeraldOptions.trackLifecycleEvents`): `$app_installed` (first launch of the install), `$app_updated` (a new version or build, with `previous_version` and `previous_build`), `$app_opened` (cold start, at its first foreground, with `from_push`), `$app_foreground` and `$app_background`. They are `track` events with reserved names, sent in minimal data collection too. State from an earlier SDK only stores the version on its first 0.6.0 launch.
+- `$deep_link_opened` (`trackDeepLinks`, on by default) when a URL goes through `Herald.openUrl` or a notification tap: `scheme`, `host`, `path` and `source` (`push` or `link`). No fragment, and no query unless `trackDeepLinkQuery` is on. Minimal data collection sends scheme and host only.
+- `HeraldOptions.foregroundSessionTimeoutMinutes` and `backgroundSessionTimeoutMinutes` (both 30): a session ends after the foreground timeout of inactivity, or after the background timeout once the app is in the background. A cold start within the foreground timeout of the last activity continues the session.
+- `session_start` carries `properties.session_index` (sessions on this install, from 1) and `properties.previous_session_id` (null for the first).
+- `HeraldOptions.maxQueuedEventAgeDays` (30): older queued events are dropped before a batch is built, logged at debug level and counted in `dropped` (Herald would reject them as `too_old`).
 
-## 0.5.0
+### Deprecated
+
+- `sessionTimeoutMinutes`: it is the default of both new timeouts, so setting it alone sets both.
 
 ### Changed
 
 - Events over 32 KB of JSON are dropped before they are queued, logged at debug level and counted in `dropped` (Herald would reject them).
-- Partial rejects: when Herald accepts a batch but lists events it couldn't accept in `rejected`, the batch leaves the queue as before, each rejected event is logged at debug level with its reason, and none is retried. A 400 from an older server still drops the batch. (iOS also adds the build kind to device context and `flush(timeout:)` in 0.5.0.)
+- Partial rejects: when Herald accepts a batch but lists events it couldn't accept in `rejected`, the batch leaves the queue as before, each rejected event is logged at debug level with its reason, and none is retried. A 400 from an older server still drops the batch.
 
 ### Changed in Herald (server, every SDK version)
 
 - Per-event validation: each event in a batch is checked on its own. An invalid event (unknown type, missing or invalid field, over 32 KB, or more than 30 days old) is rejected and listed in the response's `rejected`; the rest of the batch is kept. Before, one bad event failed the whole batch with a 400 and the SDK dropped all of it. The console lists rejected events on the connection's page for 30 days.
 - Clock correction: event times are corrected for the device's clock using the batch's `sentAt` and the time it arrived, so a phone with a wrong clock no longer puts activity, send times or goal credit in the wrong window. The device's own timestamp is kept.
+- Lifecycle event and `session_start` properties are checked for their types (`invalid_field`). `$app_opened` and `$app_foreground` count as app activity; `$app_installed`, `$app_updated` and `$app_background` don't.
+
+## 0.5.0
+
+### Changed
+
+- No Android changes. The version moves with iOS, which adds the build kind to device context and `flush(timeout:)` in 0.5.0.
 
 ## 0.4.0
 

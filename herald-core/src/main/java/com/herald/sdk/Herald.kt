@@ -351,7 +351,7 @@ object Herald {
             cancelNotification(intent)
             val messageId = payload.messageId ?: payload.decisionId ?: return false
             submit { it.onPushOpened(messageId, payload.decisionId, actionId) }
-            payload.deeplink?.let(::openUrl)
+            payload.deeplink?.let { openUrl(it, "push") }
             true
         }
     } catch (e: Exception) {
@@ -459,10 +459,14 @@ object Herald {
 
     /**
      * Routes a deep link or URL through [deepLinkHandler], falling back to ACTION_VIEW. Presenters use it for
-     * button and click actions.
+     * button and click actions. Sends `$deep_link_opened` (source `link`) unless `trackDeepLinks` is off.
      */
     @JvmStatic
-    fun openUrl(url: String) {
+    fun openUrl(url: String) = openUrl(url, "link")
+
+    /** [source] is `push` for a notification tap, `link` otherwise; sent in `$deep_link_opened`. */
+    internal fun openUrl(url: String, source: String) {
+        submit { it.deepLinkOpened(url, source) }
         guard("openUrl") {
             if (deepLinkHandler?.invoke(url) == true) return@guard
             val context = appContext ?: return@guard

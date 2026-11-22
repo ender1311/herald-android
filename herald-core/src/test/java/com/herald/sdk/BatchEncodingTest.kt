@@ -107,7 +107,7 @@ class BatchEncodingTest {
 
     @Test
     fun anonymousMinimalBatchMatchesFixtureStructure() {
-        val h = CoreHarness(options = HeraldOptions(deviceDataCollection = DeviceDataCollection.MINIMAL))
+        val h = CoreHarness(options = HeraldOptions(deviceDataCollection = DeviceDataCollection.MINIMAL, trackLifecycleEvents = false))
         val core = h.newCore()
         core.track("app_opened", emptyMap())
         val batch = JSONObject(core.encodeBatch(core.queue.peekBatch(100), 3))

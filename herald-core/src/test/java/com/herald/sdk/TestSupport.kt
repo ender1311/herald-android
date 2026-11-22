@@ -54,7 +54,7 @@ internal class CoreHarness(
     val dir: File = Files.createTempDirectory("herald").toFile(),
     val transport: FakeTransport = FakeTransport(),
     val clock: TestClock = TestClock(),
-    val options: HeraldOptions = HeraldOptions(),
+    val options: HeraldOptions = HeraldOptions(trackLifecycleEvents = false), // LifecycleTest turns it on
     val ids: Iterator<String> = generateSequence(1) { it + 1 }.map { "id-$it" }.iterator(),
 ) {
     val cards = MutableStateFlow<List<ContentCard>>(emptyList())

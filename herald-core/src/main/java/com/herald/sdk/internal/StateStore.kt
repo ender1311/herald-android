@@ -45,6 +45,12 @@ internal class StateStore(private val file: File) {
     var userTokenRequired = false
     /** The current user's User ID (XXXX-XXXX) from the last accepted batch; null while anonymous. */
     var heraldId: String? = null
+    /** The app version and build last launched, for `$app_installed` / `$app_updated`. */
+    var appVersion: String? = null
+    var appBuild: String? = null
+    /** Sessions started on this install (`session_index` of the latest) and the latest session's id. */
+    var sessionIndex: Long = 0
+    var lastSessionId: String? = null
 
     init {
         load()
@@ -71,6 +77,10 @@ internal class StateStore(private val file: File) {
             .put("impressedCardIds", JSONArray(impressedCardIds.toList()))
             .put("userTokenRequired", userTokenRequired)
             .putOpt("heraldId", heraldId)
+            .putOpt("appVersion", appVersion)
+            .putOpt("appBuild", appBuild)
+            .put("sessionIndex", sessionIndex)
+            .putOpt("lastSessionId", lastSessionId)
         try {
             file.writeAtomically(json.toString())
         } catch (e: Exception) {
@@ -133,6 +143,10 @@ internal class StateStore(private val file: File) {
             messagesBody = json.str("messagesBody")
             userTokenRequired = json.optBoolean("userTokenRequired", false)
             heraldId = json.str("heraldId")
+            appVersion = json.str("appVersion")
+            appBuild = json.str("appBuild")
+            sessionIndex = json.num("sessionIndex")?.toLong() ?: 0
+            lastSessionId = json.str("lastSessionId")
             json.arr("dismissedCardIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(dismissedCardIds::add) } }
             json.arr("undeliveredIds")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(undeliveredIds::add) } }
             json.arr("recentPushOpens")?.let { a -> (0 until a.length()).forEach { i -> (a.opt(i) as? String)?.let(recentPushOpens::add) } }

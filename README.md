@@ -51,6 +51,8 @@ Herald.track("workout_completed", mapOf("minutes" to 32))
 
 Herald checks each event on its own: an event it can't accept is left out of an otherwise accepted batch, logged at debug level with its reason (`Herald rejected event <id>: <reason> (<detail>)`) and never retried. An event over 32 KB is dropped on the device and counted in `dropped`. The console lists rejected events on the connection's page. Event times are corrected for the device's clock on the server.
 
+From 0.6.0 the SDK sends lifecycle events on its own (`$app_installed`, `$app_updated`, `$app_opened`, `$app_foreground`, `$app_background`; turn off with `HeraldOptions(trackLifecycleEvents = false)`) and `$deep_link_opened` for links that go through `Herald.openUrl` or a notification tap (`trackDeepLinks`; no query unless `trackDeepLinkQuery`). Sessions have separate `foregroundSessionTimeoutMinutes` and `backgroundSessionTimeoutMinutes` (30 each; `sessionTimeoutMinutes` is deprecated and sets both), continue across a cold start within the foreground timeout, and `session_start` carries `session_index` and `previous_session_id`. Queued events older than `maxQueuedEventAgeDays` (30) are dropped and counted in `dropped`.
+
 The full guide, including push setup, is at https://heraldsdk.com/docs.
 
 ## Support ID
