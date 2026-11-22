@@ -72,6 +72,11 @@ internal class EventQueue(private val file: File, private val cap: Int = 1000) {
         return removed
     }
 
+    /** Removes the events [drop] matches (not counted in `dropped`). */
+    fun removeWhere(drop: (QueuedEvent) -> Boolean) {
+        if (entries.removeAll(drop)) persist()
+    }
+
     fun clear() {
         entries.clear()
         dropped = 0

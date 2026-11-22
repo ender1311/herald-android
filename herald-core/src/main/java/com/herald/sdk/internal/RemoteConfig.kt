@@ -27,9 +27,14 @@ internal class RemoteConfig(val version: String, private val settings: JSONObjec
     private fun minutes(key: String): Long? = settings.num(key)?.toLong()?.let { ((it + 30) / 60).coerceAtLeast(1) }
 
     companion object {
-        /** A 200 body, `{ "data": { "version": …, "settings": { … } } }`; null when unreadable. */
-        fun parse(body: String): RemoteConfig? = runCatching {
-            val data = JSONObject(body).obj("data") ?: return null
+        /**
+         * A 200 body, `{ "data": { "version": …, "settings": { … } } }`; null when unreadable. The cached copy also holds
+         * the `appKey` it was fetched with: with [cachedFor], one for another key is ignored.
+         */
+        fun parse(body: String, cachedFor: String? = null): RemoteConfig? = runCatching {
+            val json = JSONObject(body)
+            if (cachedFor != null && json.str("appKey") != cachedFor) return null
+            val data = json.obj("data") ?: return null
             RemoteConfig(data.str("version") ?: return null, data.obj("settings") ?: JSONObject())
         }.getOrNull()
     }

@@ -162,6 +162,7 @@ object Herald {
                             it.scheduleShowRetry = ::scheduleShowRetry
                             it.scheduleCardRefresh = ::scheduleCardRefresh
                             it.requestPushToken = { PushTokenSource.request?.invoke() }
+                            it.runOnSdkThread = { block -> submit { block() } }
                         }
                     }
                 } finally {
