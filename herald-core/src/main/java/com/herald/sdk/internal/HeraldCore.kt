@@ -446,7 +446,12 @@ internal class HeraldCore(
         Validation.length("event name", name, 1, Validation.MAX_NAME)?.let { return reject("track", it) }
         Validation.properties("properties", properties)?.let { return reject("track", it) }
         val props = jsonOrNull(properties, "track properties") ?: return
-        enqueue("track") { put("name", name).put("properties", props).putOpt("schemaVersion", schemaVersion) }
+        // SchemaVer MODEL-REVISION-ADDITION; a malformed one is dropped, not the event.
+        val version = schemaVersion?.takeIf { SCHEMA_VERSION.matches(it) }
+        if (schemaVersion != null && version == null) {
+            HeraldLog.debug("Ignoring schemaVersion \"$schemaVersion\" on $name: expected a version such as 1-0-0")
+        }
+        enqueue("track") { put("name", name).put("properties", props).putOpt("schemaVersion", version) }
         trigger(TriggerEvent(TriggerType.EVENT, name, properties))
     }
 
@@ -1074,6 +1079,7 @@ internal class HeraldCore(
     // endregion
 
     companion object {
+        private val SCHEMA_VERSION = Regex("^[1-9][0-9]*-(0|[1-9][0-9]*)-(0|[1-9][0-9]*)$")
         const val SDK_NAME = "herald-android"
         const val QUEUE_CAP = 1000
         const val MAX_BATCH_EVENTS = 100

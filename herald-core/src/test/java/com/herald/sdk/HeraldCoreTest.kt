@@ -32,11 +32,14 @@ class HeraldCoreTest {
     fun trackSendsSchemaVersionOnlyWhenGiven() {
         core.track("signup", mapOf("plan" to "pro"), schemaVersion = "1-0-0")
         core.track("signup", emptyMap())
+        core.track("signup", emptyMap(), schemaVersion = "v1")
         core.flush()
         val all = h.transport.batches.single().getJSONArray("events")
         val tracks = (0 until all.length()).map { all.getJSONObject(it) }.filter { it.getString("type") == "track" }
         assertEquals("1-0-0", tracks[0].getString("schemaVersion"))
         assertFalse(tracks[1].has("schemaVersion"))
+        assertEquals("a malformed version is dropped, the event kept", 3, tracks.size)
+        assertFalse(tracks[2].has("schemaVersion"))
     }
 
     @Test

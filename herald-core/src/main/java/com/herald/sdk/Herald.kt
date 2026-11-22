@@ -196,9 +196,9 @@ object Herald {
 
     // Events
 
+    /** [schemaVersion] names the event schema version to check the event against (e.g. "1-0-0"); null means the latest. */
     @JvmStatic
     @JvmOverloads
-    /** [schemaVersion] names the event schema version to check the event against (e.g. "1-0-0"); null means the latest. */
     fun track(
         event: String,
         properties: Map<String, Any?> = emptyMap(),
