@@ -19,6 +19,7 @@ import com.herald.sdk.internal.PendingCalls
 import com.herald.sdk.internal.PushPermissionRequest
 import com.herald.sdk.internal.StateStore
 import com.herald.sdk.internal.TapToken
+import com.herald.sdk.push.ExternalPush
 import com.herald.sdk.push.HeraldPushPayload
 import com.herald.sdk.push.PushTokenSource
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -183,6 +184,27 @@ object Herald {
     @JvmStatic
     @JvmOverloads
     fun track(event: String, properties: Map<String, Any?> = emptyMap()) = submit { it.track(event, properties) }
+
+    /**
+     * Reports a push your app sent itself (from its own backend, Firebase or another service) so Herald's push
+     * limit counts it. Pass the same [messageId] your backend reports to `POST /api/v1/events`, so the push counts
+     * once. Never include the push's title or body.
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun trackExternalPush(messageId: String? = null, category: ExternalPushCategory = ExternalPushCategory.OTHER, source: String? = null) =
+        submit { it.trackExternalPush(messageId, category, source, automatic = false) }
+
+    /**
+     * Records an FCM message that is not from Herald as `$external_push` when it carries a notification (with
+     * `trackExternalPushes` on). herald-fcm's `HeraldMessagingService` calls this; call it from `onMessageReceived`
+     * only in your own FirebaseMessagingService.
+     */
+    @JvmStatic
+    fun handleExternalPush(data: Map<String, String>, hasNotification: Boolean, fcmMessageId: String?) {
+        val (messageId, category) = ExternalPush.capture(data, hasNotification, fcmMessageId) ?: return
+        submit { it.trackExternalPush(messageId, category, null, automatic = true) }
+    }
 
     @JvmStatic
     @JvmOverloads

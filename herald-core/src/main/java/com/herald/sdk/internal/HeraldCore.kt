@@ -1,6 +1,7 @@
 package com.herald.sdk.internal
 
 import com.herald.sdk.ContentCard
+import com.herald.sdk.ExternalPushCategory
 import com.herald.sdk.HeraldOptions
 import com.herald.sdk.InAppDisplayDecision
 import com.herald.sdk.InAppMessage
@@ -8,6 +9,7 @@ import com.herald.sdk.InAppMessageDelegate
 import com.herald.sdk.SubscriptionChannel
 import com.herald.sdk.SubscriptionState
 import com.herald.sdk.TriggerType
+import com.herald.sdk.push.ExternalPush
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
@@ -328,6 +330,13 @@ internal class HeraldCore(
         val props = jsonOrNull(properties, "track properties") ?: return
         enqueue("track") { put("name", name).put("properties", props) }
         trigger(TriggerEvent(TriggerType.EVENT, name, properties))
+    }
+
+    /** [automatic]: recorded by the SDK itself, only with `trackExternalPushes` on. */
+    fun trackExternalPush(messageId: String?, category: ExternalPushCategory, source: String?, automatic: Boolean) {
+        if (automatic && !options.trackExternalPushes) return
+        val props = ExternalPush.properties(messageId, category, source) ?: return reject("trackExternalPush", ExternalPush.TOO_LONG)
+        track(ExternalPush.EVENT, props)
     }
 
     fun screen(name: String, properties: Map<String, Any?>) {

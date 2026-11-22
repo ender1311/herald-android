@@ -21,7 +21,10 @@ open class HeraldMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        if (!HeraldNotifications.handleRemoteMessage(this, message)) onNonHeraldMessage(message)
+        if (!HeraldNotifications.handleRemoteMessage(this, message)) {
+            Herald.handleExternalPush(message.data, message.notification != null, message.messageId)
+            onNonHeraldMessage(message)
+        }
     }
 
     /** A push that did not come from Herald. Does nothing by default. */

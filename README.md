@@ -28,9 +28,9 @@ Then the modules:
 ```kotlin
 // app/build.gradle.kts
 dependencies {
-    implementation("com.github.ender1311.herald-android:herald-core:0.5.0")
-    implementation("com.github.ender1311.herald-android:herald-ui:0.5.0")
-    implementation("com.github.ender1311.herald-android:herald-fcm:0.5.0")
+    implementation("com.github.ender1311.herald-android:herald-core:0.6.0")
+    implementation("com.github.ender1311.herald-android:herald-ui:0.6.0")
+    implementation("com.github.ender1311.herald-android:herald-fcm:0.6.0")
 }
 ```
 
@@ -50,6 +50,24 @@ Herald.track("workout_completed", mapOf("minutes" to 32))
 ```
 
 The full guide, including push setup, is at https://heraldsdk.com/docs.
+
+## Pushes your app sends
+
+Herald limits how many pushes a person gets in 24 hours, counting pushes your app sends itself. Report each one from
+your backend with the `$external_push` event (`POST /api/v1/events`), or from the app:
+
+```kotlin
+Herald.trackExternalPush(messageId = "order-42-shipped", category = ExternalPushCategory.TRANSACTIONAL, source = "orders")
+```
+
+With `trackExternalPushes` on (the default, in `HeraldOptions`), herald-fcm's `HeraldMessagingService` also records an
+FCM message that isn't from Herald and carries a notification when it reaches the app (while the app is in the
+foreground; in the background Android shows notification messages without the app). Data-only messages are never
+recorded, and taps on your own notifications aren't. Put the id your backend reports in the data key
+`herald_external_id` (else `RemoteMessage.messageId` is used) and `transactional`, `marketing` or `other` in
+`herald_category`, so the backend's report and the SDK's count once. In your own FirebaseMessagingService, call
+`Herald.handleExternalPush(message.data, message.notification != null, message.messageId)`. Guide:
+https://heraldsdk.com/docs/push-notifications/pushes-your-app-sends
 
 ## License
 

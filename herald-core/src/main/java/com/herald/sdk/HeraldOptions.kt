@@ -13,7 +13,12 @@ data class HeraldOptions(
     val sessionTimeoutMinutes: Long = 30,
     val inAppMinimumIntervalSeconds: Long = 30,
     val logLevel: LogLevel = LogLevel.WARN,
+    /** Records a push your app sent itself (not from Herald) as `$external_push` when herald-fcm receives it, so Herald's push limit counts it. */
+    val trackExternalPushes: Boolean = true,
 )
+
+/** The kind of push your app sent itself, reported with [Herald.trackExternalPush]. */
+enum class ExternalPushCategory(internal val wire: String) { TRANSACTIONAL("transactional"), MARKETING("marketing"), OTHER("other") }
 
 enum class SubscriptionChannel(internal val wire: String) { PUSH("push"), EMAIL("email"), SMS("sms") }
 
