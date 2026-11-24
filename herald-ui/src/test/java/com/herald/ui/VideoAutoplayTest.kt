@@ -17,6 +17,12 @@ class VideoAutoplayTest {
     }
 
     @Test
+    fun aFailedVideoNeverAutoplaysAgain() {
+        assertTrue(VideoAutoplay.shouldPlay(1f, autoplay = true, reducedMotion = false, failed = false))
+        assertFalse("stays on the poster", VideoAutoplay.shouldPlay(1f, autoplay = true, reducedMotion = false, failed = true))
+    }
+
+    @Test
     fun playButtonLabel() {
         val strings = java.io.File("src/main/res/values/strings.xml").readText()
         assertTrue(strings.contains("""<string name="herald_play_video">Play video</string>"""))

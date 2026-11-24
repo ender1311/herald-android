@@ -1,6 +1,7 @@
 package com.herald.ui
 
 import android.content.Context
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.provider.Settings
@@ -37,10 +38,11 @@ import androidx.compose.ui.viewinterop.AndroidView
 internal object VideoAutoplay {
     /**
      * Muted autoplay runs only for a card with `videoAutoplay`, while at least half of it is visible, and
-     * never with the system "remove animations" setting on.
+     * never with the system "remove animations" setting on, and not again for a video that failed (it stays on
+     * its poster).
      */
-    fun shouldPlay(visibleFraction: Float, autoplay: Boolean, reducedMotion: Boolean) =
-        autoplay && !reducedMotion && visibleFraction >= 0.5f
+    fun shouldPlay(visibleFraction: Float, autoplay: Boolean, reducedMotion: Boolean, failed: Boolean = false) =
+        autoplay && !reducedMotion && !failed && visibleFraction >= 0.5f
 
     /** The system "remove animations" setting sets the animator duration scale to 0. */
     fun animationsRemoved(animatorDurationScale: Float) = animatorDurationScale == 0f
@@ -127,8 +129,9 @@ internal fun HeraldVideo(
         VideoAutoplay.animationsRemoved(Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f))
     }
     val visible = LocalHeraldVisibleFraction.current
-    val shouldAutoplay by remember(autoplay, reducedMotion, visible) {
-        derivedStateOf { VideoAutoplay.shouldPlay(visible.value, autoplay, reducedMotion) }
+    var failed by remember(url) { mutableStateOf(false) }
+    val shouldAutoplay by remember(autoplay, reducedMotion, visible, failed) {
+        derivedStateOf { VideoAutoplay.shouldPlay(visible.value, autoplay, reducedMotion, failed) }
     }
     val events = remember { VideoPlayEvents() }
     var mode by remember { mutableStateOf(VideoMode.POSTER) }
@@ -156,7 +159,16 @@ internal fun HeraldVideo(
                         muted = !tapped
                         looping = !tapped
                         if (tapped) setMediaController(MediaController(ctx).also { it.setAnchorView(this) })
+                        // Muted autoplay must not take audio focus (it would pause the user's music).
+                        if (!tapped) setAudioFocusRequest(AudioManager.AUDIOFOCUS_NONE)
                         onStarted = { if (events.started()) onPlay() }
+                        // No system "Can't play this video" dialog: fall back to the poster and stay there.
+                        setOnErrorListener { _, _, _ ->
+                            failed = true
+                            events.ended()
+                            mode = VideoMode.POSTER
+                            true
+                        }
                         setOnCompletionListener { if (events.ended()) onComplete() }
                         setVideoURI(Uri.parse(url))
                         start()
