@@ -44,6 +44,17 @@ class InAppDisplayTest {
     }
 
     @Test
+    fun videoInteractionsCarryMessageKindAndDecision() {
+        core.track("workout_completed", mapOf("minutes" to 32))
+        val message = shown.single()
+        core.onInAppVideo(message, completed = false)
+        core.onInAppVideo(message, completed = true)
+        val actions = interactions().filter { it.getString("messageId") == "msg_2" }
+        assertEquals(listOf("video_play", "video_complete"), actions.map { it.getString("action") })
+        assertTrue(actions.all { it.getString("decisionId") == "dec_2" && it.getString("kind") == "in_app" })
+    }
+
+    @Test
     fun laterStaysPendingAndIsReOfferedAutomatically() {
         val asked = mutableListOf<String>()
         var decision = InAppDisplayDecision.LATER

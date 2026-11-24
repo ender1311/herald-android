@@ -391,6 +391,19 @@ class HeraldCoreTest {
     }
 
     @Test
+    fun videoInteractionsAreLoggedAsInteractionEvents() {
+        core.identify("u_1", emptyMap())
+        val card = h.cards.value.first()
+        core.logCardVideo(card.id, completed = false)
+        core.logCardVideo(card.id, completed = true)
+        core.flush()
+        val interactions = h.transport.batches.flatMap { b -> b.getJSONArray("events").let { a -> (0 until a.length()).map { a.getJSONObject(it) } } }
+            .filter { it.getString("type") == "interaction" }
+        assertEquals(listOf("video_play", "video_complete"), interactions.map { it.getString("action") })
+        assertTrue(interactions.all { it.getString("decisionId") == "dec_1" && it.getString("kind") == "content_card" && it.getString("messageId") == card.id })
+    }
+
+    @Test
     fun cardInteractionsCarryDecisionIdAndDismissalSticks() {
         core.identify("u_1", emptyMap())
         val card = h.cards.value.first()

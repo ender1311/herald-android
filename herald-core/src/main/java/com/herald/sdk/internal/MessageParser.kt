@@ -11,6 +11,7 @@ import com.herald.sdk.InAppMessage
 import com.herald.sdk.InAppMessageType
 import com.herald.sdk.InAppStyle
 import com.herald.sdk.InAppTrigger
+import com.herald.sdk.MediaCredit
 import com.herald.sdk.PropertyFilter
 import com.herald.sdk.ReEligibility
 import com.herald.sdk.ReEligibilityMode
@@ -69,7 +70,17 @@ internal object MessageParser {
             clicked = o.bool("clicked") ?: false,
             dismissed = o.bool("dismissed") ?: false,
             decisionId = o.str("decisionId"),
+            videoUrl = o.str("videoUrl"),
+            videoPosterUrl = o.str("videoPosterUrl"),
+            videoAutoplay = o.bool("videoAutoplay") ?: false,
+            credit = o.obj("credit")?.let(::parseCredit),
         )
+    }
+
+    /** A credit without a name is dropped. */
+    private fun parseCredit(c: JSONObject): MediaCredit? {
+        val name = c.str("name")?.takeIf { it.isNotEmpty() } ?: return null
+        return MediaCredit(name, c.str("profileUrl"), c.str("sourceUrl"))
     }
 
     fun parseInApp(o: JSONObject): InAppMessage? {
@@ -89,6 +100,9 @@ internal object MessageParser {
             html = c.str("html"),
             slideFrom = c.str("slideFrom"),
             dismissAfterSeconds = c.num("dismissAfterSeconds")?.toDouble(),
+            videoUrl = c.str("videoUrl"),
+            videoPosterUrl = c.str("videoPosterUrl"),
+            credit = c.obj("credit")?.let(::parseCredit),
         )
         if (type == InAppMessageType.HTML && content.html == null) return null
         val s = o.obj("style") ?: JSONObject()

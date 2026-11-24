@@ -29,6 +29,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -128,16 +129,20 @@ fun ContentCardFeed(
                 Herald.logClick(card)
                 onCardClick(card)
             }
+            val visibleFraction = remember { mutableFloatStateOf(0f) }
             val tracked = Modifier.onGloballyPositioned { coordinates ->
+                if (card.videoAutoplay) {
+                    visibleFraction.floatValue = VideoAutoplay.visibleFraction(coordinates.boundsInWindow().height, coordinates.size.height)
+                }
                 if (card.id !in impressed && isImpression(coordinates.boundsInWindow().height, coordinates.size.height)) {
                     impressed += card.id
                     Herald.logImpression(card)
                 }
             }
             if (card.dismissible) {
-                DismissibleCard(card, tracked) { cardContent(card, onClick) }
+                DismissibleCard(card, tracked) { WithVisibleFraction(visibleFraction) { cardContent(card, onClick) } }
             } else {
-                Box(tracked) { cardContent(card, onClick) }
+                Box(tracked) { WithVisibleFraction(visibleFraction) { cardContent(card, onClick) } }
             }
         }
     }
@@ -219,7 +224,16 @@ fun ClassicContentCard(card: ContentCard, onClick: () -> Unit) {
 fun CaptionedImageContentCard(card: ContentCard, onClick: () -> Unit) {
     CardFrame(card, onClick) {
         Column {
-            CardImage(card.imageUrl, description = null, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
+            val media = Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+            val videoUrl = card.videoUrl
+            if (videoUrl != null) {
+                HeraldVideo(
+                    videoUrl, card.videoPosterUrl ?: card.imageUrl, media, autoplay = card.videoAutoplay,
+                    onPlay = { Herald.logVideoPlay(card) }, onComplete = { Herald.logVideoComplete(card) },
+                )
+            } else {
+                CardImage(card.imageUrl, description = null, media)
+            }
             CardText(card)
         }
     }

@@ -460,6 +460,14 @@ object Herald {
     @JvmStatic
     fun logDismissal(card: ContentCard) = submit { it.logCardDismissal(card.id) }
 
+    /** Only for custom displays (herald-ui logs these): the card's video started playing. */
+    @JvmStatic
+    fun logVideoPlay(card: ContentCard) = submit { it.logCardVideo(card.id, completed = false) }
+
+    /** Only for custom displays (herald-ui logs these): the card's video played to the end. */
+    @JvmStatic
+    fun logVideoComplete(card: ContentCard) = submit { it.logCardVideo(card.id, completed = true) }
+
     // In-app messages
 
     /**
@@ -615,6 +623,8 @@ object Herald {
     private class Callbacks(private val message: InAppMessage) : InAppMessageCallbacks {
         override fun onImpression() = submit { it.onInAppImpression(message) }
         override fun onClick(buttonId: String?) = submit { it.onInAppClick(message, buttonId) }
+        override fun onVideoPlay() = submit { it.onInAppVideo(message, completed = false) }
+        override fun onVideoComplete() = submit { it.onInAppVideo(message, completed = true) }
         override fun onDismiss() {
             mainHandler.post { if (presented?.second === message) presented = null }
             submit { it.onInAppDismiss(message) }

@@ -59,6 +59,18 @@ The SDK also fetches remote settings from the console (Settings, SDK settings) a
 
 The full guide, including push setup, is at https://heraldsdk.com/docs.
 
+## Video
+
+A push with a video shows its poster: Android push ignores `video_url`.
+
+In-app modal and full-screen messages and captioned-image content cards with `videoUrl` show the poster with a play
+button ("Play video" for TalkBack); a tap plays the video inline with sound and the standard controls (platform
+`VideoView`, no new dependency). Cards with `videoAutoplay` play muted and looped in `ContentCardFeed` while at least
+half visible, and not at all with the system "remove animations" setting on. Slideup, HTML, classic and image-only
+layouts ignore the video. herald-ui sends `video_play` and `video_complete` interactions once per play; a custom display
+calls `Herald.logVideoPlay(card)` and `Herald.logVideoComplete(card)` (messages report through `InAppMessageActions` or
+`InAppMessageCallbacks`). `credit` holds the photographer's name and links for apps that show a credit.
+
 ## Support ID
 
 `Herald.heraldId` is the identified person's User ID (`XXXX-XXXX`), which support can search on People in Herald.

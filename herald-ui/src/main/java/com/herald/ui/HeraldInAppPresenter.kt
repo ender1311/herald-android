@@ -218,6 +218,10 @@ class HeraldInAppPresenter @JvmOverloads constructor(
             if (!dismissed) callbacks.onClick(buttonId)
         }
 
+        override fun videoPlayed() = callbacks.onVideoPlay()
+
+        override fun videoCompleted() = callbacks.onVideoComplete()
+
         override fun dismiss() {
             if (dismissed) return
             dismissed = true

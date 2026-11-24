@@ -80,4 +80,36 @@ class MessageParserTest {
         assertNull(MessageParser.parse("<html>"))
         assertNull(MessageParser.parse("""{"error":"nope"}"""))
     }
+
+    @Test
+    fun decodesVideoFieldsAndCredit() {
+        val body = """
+            {"data":{"contentCards":[
+              {"id":"v","type":"captioned_image","imageUrl":"https://e.com/p.jpg","createdAt":"2026-11-09T14:00:00.000Z",
+               "videoUrl":"https://e.com/v.mp4","videoPosterUrl":"https://e.com/p.jpg","videoAutoplay":true,
+               "credit":{"name":"Ada","profileUrl":"https://e.com/ada","sourceUrl":"https://e.com/s"}},
+              {"id":"nocredit","type":"classic","createdAt":"2026-11-09T14:00:00.000Z","credit":{"profileUrl":"https://e.com/x"}}
+            ],"inAppMessages":[
+              {"id":"m","type":"modal","trigger":{"type":"session_start"},"reEligibility":{"mode":"once"},
+               "content":{"imageUrl":"https://e.com/p.jpg","videoUrl":"https://e.com/v.mp4","videoPosterUrl":"https://e.com/p.jpg","credit":{"name":"Bo"}}}
+            ]}}
+        """.trimIndent()
+        val payload = MessageParser.parse(body)!!
+        val card = payload.contentCards[0]
+        assertEquals("https://e.com/v.mp4", card.videoUrl)
+        assertEquals("https://e.com/p.jpg", card.videoPosterUrl)
+        assertTrue(card.videoAutoplay)
+        assertEquals(MediaCredit("Ada", "https://e.com/ada", "https://e.com/s"), card.credit)
+        assertNull("a credit without a name is dropped", payload.contentCards[1].credit)
+        val content = payload.inAppMessages.single().content
+        assertEquals("https://e.com/v.mp4", content.videoUrl)
+        assertEquals(MediaCredit("Bo", null, null), content.credit)
+    }
+
+    @Test
+    fun payloadsWithoutVideoKeysParseUnchanged() {
+        val payload = MessageParser.parse(fixture("messages.json"))!!
+        assertTrue(payload.contentCards.all { it.videoUrl == null && it.videoPosterUrl == null && !it.videoAutoplay && it.credit == null })
+        assertTrue(payload.inAppMessages.all { it.content.videoUrl == null && it.content.credit == null })
+    }
 }

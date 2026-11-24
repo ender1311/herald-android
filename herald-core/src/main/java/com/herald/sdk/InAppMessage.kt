@@ -46,6 +46,12 @@ data class InAppContent(
     /** "top" or "bottom" for slideups; null means the presenter's default. */
     val slideFrom: String?,
     val dismissAfterSeconds: Double?,
+    /** A video to play in place of the image; [imageUrl] then holds its poster. */
+    val videoUrl: String? = null,
+    /** The video's poster (the same as [imageUrl]). */
+    val videoPosterUrl: String? = null,
+    /** Who made the stock photo or video, for apps that show a credit. */
+    val credit: MediaCredit? = null,
 )
 
 /** Null fields mean "use the app theme". Colors are hex strings such as "#101828". */
@@ -88,6 +94,12 @@ interface InAppMessageCallbacks {
 
     /** The user tapped the message body (buttonId null) or a button. */
     fun onClick(buttonId: String?)
+
+    /** The message's video started playing (once per play). */
+    fun onVideoPlay() {}
+
+    /** The message's video played to the end (once per play). */
+    fun onVideoComplete() {}
 
     /** The message left the screen, for any reason. Must be called exactly once. */
     fun onDismiss()

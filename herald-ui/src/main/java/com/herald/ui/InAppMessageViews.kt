@@ -88,6 +88,12 @@ interface InAppMessageActions {
     /** Logs a click with a button id without dismissing (the HTML bridge's `herald.click(id)`). */
     fun clicked(buttonId: String)
 
+    /** Logs that the message's video started playing (once per play). The default views call it. */
+    fun videoPlayed() {}
+
+    /** Logs that the message's video played to the end (once per play). The default views call it. */
+    fun videoCompleted() {}
+
     /** Takes the message down. A dismiss is logged only when nothing was clicked. */
     fun dismiss()
 }
@@ -147,6 +153,21 @@ internal fun readableTextOn(color: Color): Color {
 
 /** TalkBack announces the message header as a heading, as VoiceOver does on iOS. */
 internal val headerSemantics: SemanticsPropertyReceiver.() -> Unit = { heading() }
+
+/** The message's video (poster with a play button) when it has one, else its image. */
+@Composable
+private fun MessageMedia(message: InAppMessage, actions: InAppMessageActions, modifier: Modifier) {
+    val content = message.content
+    val videoUrl = content.videoUrl
+    if (videoUrl != null) {
+        HeraldVideo(
+            videoUrl, content.videoPosterUrl ?: content.imageUrl, modifier,
+            onPlay = actions::videoPlayed, onComplete = actions::videoCompleted,
+        )
+    } else {
+        content.imageUrl?.let { CardImage(it, description = null, modifier) }
+    }
+}
 
 @Composable
 private fun MessageText(
@@ -268,9 +289,7 @@ fun ModalMessageView(message: InAppMessage, actions: InAppMessageActions, theme:
                 .pointerInput(Unit) { detectTapGestures { } },
         ) {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                message.content.imageUrl?.let {
-                    CardImage(it, description = null, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
-                }
+                MessageMedia(message, actions, Modifier.fillMaxWidth().aspectRatio(16f / 9f))
                 Column(Modifier.padding(theme.spacing * 1.5f), horizontalAlignment = Alignment.CenterHorizontally) {
                     // Keeps a long centered header clear of the 48 dp close button.
                     MessageText(message, colors, theme, TextAlign.Center, headerInset = 32.dp)
@@ -288,9 +307,7 @@ fun FullScreenMessageView(message: InAppMessage, actions: InAppMessageActions, t
     val colors = messageColors(message.style, theme)
     Box(Modifier.fillMaxSize().background(colors.background).safeDrawingPadding()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-            message.content.imageUrl?.let {
-                CardImage(it, description = null, Modifier.fillMaxWidth().aspectRatio(4f / 3f))
-            }
+            MessageMedia(message, actions, Modifier.fillMaxWidth().aspectRatio(4f / 3f))
             Column(Modifier.padding(theme.spacing * 1.5f)) {
                 Spacer(Modifier.height(if (message.content.imageUrl == null) 48.dp else 0.dp))
                 MessageText(message, colors, theme, TextAlign.Start)

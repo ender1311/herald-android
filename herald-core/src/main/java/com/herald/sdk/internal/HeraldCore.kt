@@ -890,6 +890,12 @@ internal class HeraldCore(
         logInteraction(card.id, "content_card", "dismiss", card.decisionId)
     }
 
+    /** `video_play` when a card's video starts, `video_complete` when it reaches the end. */
+    fun logCardVideo(cardId: String, completed: Boolean) {
+        val card = contentCards.value.firstOrNull { it.id == cardId } ?: return
+        logInteraction(card.id, "content_card", if (completed) "video_complete" else "video_play", card.decisionId)
+    }
+
     private fun updateCard(cardId: String, change: (ContentCard) -> ContentCard): ContentCard? {
         val card = contentCards.value.firstOrNull { it.id == cardId }
             ?: return null.also { HeraldLog.warn("Unknown content card $cardId") }
@@ -1031,6 +1037,9 @@ internal class HeraldCore(
 
     fun onInAppImpression(message: InAppMessage) =
         logInteraction(message.id, "in_app", "impression", message.decisionId)
+
+    fun onInAppVideo(message: InAppMessage, completed: Boolean) =
+        logInteraction(message.id, "in_app", if (completed) "video_complete" else "video_play", message.decisionId)
 
     fun onInAppClick(message: InAppMessage, buttonId: String?) {
         clickedOnScreen = true
